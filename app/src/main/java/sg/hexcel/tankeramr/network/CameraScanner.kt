@@ -1,0 +1,85 @@
+package sg.hexcel.tankeramr.network
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import java.net.InetSocketAddress
+import java.net.Socket
+
+class CameraScanner {
+    data class HostCandidate(
+        val ip: String,
+        val openPorts: List<Int>,
+        val primaryRtspUrl: String,
+        val candidateUrls: List<String>
+    ) {
+        override fun toString(): String = "$ip  ports=$openPorts"
+    }
+
+    suspend fun scanSubnet(prefix: String = "192.168.144", start: Int = 2, end: Int = 254): List<HostCandidate> = coroutineScope {
+        (start..end).map { last ->
+            async(Dispatchers.IO) { scanIp("$prefix.$last") }
+        }.awaitAll().filterNotNull().sortedBy { it.ip.substringAfterLast('.').toIntOrNull() ?: 999 }
+    }
+
+    companion object {
+        /**
+         * Confirmed JINGYANG / XM 1080P camera RTSP pattern for username admin and empty password.
+         * stream=1 is used by default for four-camera display because it normally gives lower decode load,
+         * lower latency, and fewer gray/distorted frames than the 1080P main stream.
+         * Change DEFAULT_STREAM to 0 if maximum image quality is more important than four-grid stability.
+         */
+        private const val DEFAULT_STREAM = 0
+
+        fun buildXmEyeRtspUrl(ip: String, stream: Int = DEFAULT_STREAM): String {
+            return "rtsp://admin:@$ip:554/user=admin&password=&channel=1&stream=$stream.sdp"
+        }
+
+        fun defaultFourCameraUrls(): List<String> = listOf(
+            buildXmEyeRtspUrl("192.168.144.100"),
+            buildXmEyeRtspUrl("192.168.144.110"),
+            buildXmEyeRtspUrl("192.168.144.130"),
+            buildXmEyeRtspUrl("192.168.144.120")
+        )
+    }
+
+    private fun scanIp(ip: String): HostCandidate? {
+        val ports = listOf(554, 80, 8899, 34567, 8554, 8080)
+        val open = ports.filter { tcpOpen(ip, it, timeoutMs = 220) }
+        if (open.isEmpty()) return null
+
+        val urls = buildList {
+            if (554 in open) {
+                add(buildXmEyeRtspUrl(ip, stream = 0))
+                add("rtsp://$ip:554/user=admin&password=&channel=1&stream=0.sdp")
+                add("rtsp://$ip:554/stream=0")
+
+                // Optional fallback only. Put stream=1 below stream=0.
+                add(buildXmEyeRtspUrl(ip, stream = 1))
+                add("rtsp://$ip:554/user=admin&password=&channel=1&stream=1.sdp")
+                add("rtsp://$ip:554/stream=1")
+            }
+            if (8554 in open) add("rtsp://$ip:8554/live")
+        }.distinct()
+
+        if (urls.isEmpty()) return null
+        return HostCandidate(
+            ip = ip,
+            openPorts = open,
+            primaryRtspUrl = urls.first(),
+            candidateUrls = urls
+        )
+    }
+
+    private fun tcpOpen(ip: String, port: Int, timeoutMs: Int): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(ip, port), timeoutMs)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+}

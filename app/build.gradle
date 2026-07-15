@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'sg.hexcel.tankeramr'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'sg.hexcel.tankeramr'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions { jvmTarget = '1.8' }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+
+    // Copy these proprietary Skydroid libraries from the official demos into app/libs/.
+    // Required for FPVWidget / RTSP video playback on Skydroid devices.
+    implementation files('libs/fpvplayer-v3.3.9.aar')
+    implementation files('libs/sky-ijkplayer-v1.1.aar')
+    implementation files('libs/rcsdk-v1.9.2.aar')
+    implementation files('libs/h16_airlink.aar')
+}

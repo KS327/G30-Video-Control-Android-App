@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- RTSP camera streams normally use plain RTSP on the local 192.168.144.x subnet. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
