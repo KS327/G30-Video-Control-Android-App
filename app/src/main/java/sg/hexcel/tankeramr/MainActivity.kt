@@ -1,8 +1,13 @@
 package sg.hexcel.tankeramr
 
 import android.app.AlertDialog
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
@@ -10,6 +15,14 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.skydroid.rcsdk.KeyManager
+import com.skydroid.rcsdk.RCSDKManager
+import com.skydroid.rcsdk.SDKManagerCallBack
+import com.skydroid.rcsdk.common.DeviceType
+import com.skydroid.rcsdk.common.callback.CompletionCallbackWith
+import com.skydroid.rcsdk.common.callback.KeyListener
+import com.skydroid.rcsdk.common.error.SkyException
+import com.skydroid.rcsdk.key.RemoteControllerKey
 import kotlinx.coroutines.launch
 import sg.hexcel.tankeramr.control.TurnButton
 import sg.hexcel.tankeramr.control.TurnPacket
@@ -21,8 +34,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var videoGrid: VideoGridController
     private lateinit var udpTargetButton: Button
+    private lateinit var speedBubbles: List<TextView>
 
     private val udpSender = UdpCommandSender(host = DEFAULT_JETSON_IP, port = DEFAULT_UDP_PORT)
+
+    private val rcPollHandler = Handler(Looper.getMainLooper())
+    private var rcPollingEnabled = false
+    private var rcConnected = false
+    private var lastSpeedLevel = -1
+    private var lastRcFailureLogTimeMs = 0L
+
+    private val h16ChannelsListener: KeyListener<IntArray> = KeyListener { _, newValue ->
+        updateSpeedFromChannels(newValue)
+    }
+
+    private val rcPollRunnable = object : Runnable {
+        override fun run() {
+            if (!rcPollingEnabled) return
+
+            pollRcChannelsOnce()
+            rcPollHandler.postDelayed(this, RC_CHANNEL_POLL_INTERVAL_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +67,16 @@ class MainActivity : AppCompatActivity() {
             widgets = listOf(findViewById(R.id.fpv0), findViewById(R.id.fpv1), findViewById(R.id.fpv2), findViewById(R.id.fpv3)),
             labels = listOf(findViewById(R.id.tvCam0), findViewById(R.id.tvCam1), findViewById(R.id.tvCam2), findViewById(R.id.tvCam3))
         )
+
+        speedBubbles = listOf(
+            findViewById(R.id.speedBubble0),
+            findViewById(R.id.speedBubble1),
+            findViewById(R.id.speedBubble2),
+            findViewById(R.id.speedBubble3),
+            findViewById(R.id.speedBubble4),
+            findViewById(R.id.speedBubble5)
+        )
+        updateSpeedBubbleUi(0)
 
         udpSender.start(this) { setStatus(it) }
         updateUdpTargetButton()
@@ -47,7 +90,9 @@ class MainActivity : AppCompatActivity() {
         bindTurnButton(findViewById(R.id.btnR1), TurnButton.R1_CENTER_CW)
         bindTurnButton(findViewById(R.id.btnR2), TurnButton.R2_RIGHT_CW)
 
-        setStatus("UDP ready: ${udpSender.targetText()} | Video ready")
+        initRcSdkForSpeedDisplay()
+
+        setStatus("UDP ready: ${udpSender.targetText()} | Video ready | Speed 0")
     }
 
     private fun bindUdpTargetButton() {
@@ -101,7 +146,7 @@ class MainActivity : AppCompatActivity() {
             input.setText(CameraScanner.defaultFourCameraUrls().joinToString("\n"))
             AlertDialog.Builder(this)
                 .setTitle("Enter 1 to 4 RTSP URLs")
-                .setMessage("Default uses JINGYANG/XM low-latency sub-stream URLs. Blank lines are ignored.")
+                .setMessage("Default uses JINGYANG/XM stream=0 RTSP URLs. Blank lines are ignored.")
                 .setView(input)
                 .setPositiveButton("Play") { _, _ ->
                     val urls = input.text.toString()
@@ -197,18 +242,164 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun initRcSdkForSpeedDisplay() {
+        try {
+            RCSDKManager.setMainThreadCallBack(true)
+            RCSDKManager.initSDK(this, object : SDKManagerCallBack {
+                override fun onRcConnected() {
+                    rcConnected = true
+                    setStatus("UDP ready: ${udpSender.targetText()} | RC connected | Speed ${currentSpeedText()}")
+                    startSpeedChannelPolling()
+                }
+
+                override fun onRcConnectFail(e: SkyException?) {
+                    rcConnected = false
+                    Log.w(TAG, "RCSDK connect failed: $e")
+                    setStatus("UDP ready: ${udpSender.targetText()} | RCSDK connect failed | Speed ${currentSpeedText()}")
+                }
+
+                override fun onRcDisconnect() {
+                    rcConnected = false
+                    stopSpeedChannelPolling()
+                    Log.w(TAG, "RCSDK disconnected")
+                    setStatus("UDP ready: ${udpSender.targetText()} | RC disconnected | Speed ${currentSpeedText()}")
+                }
+            })
+            RCSDKManager.connectToRC()
+        } catch (e: Exception) {
+            Log.e(TAG, "RCSDK init/connect failed", e)
+            setStatus("UDP ready: ${udpSender.targetText()} | RCSDK unavailable | Speed ${currentSpeedText()}")
+        }
+    }
+
+    private fun startSpeedChannelPolling() {
+        stopSpeedChannelPolling()
+        rcPollingEnabled = true
+
+        try {
+            if (RCSDKManager.getDeviceType() == DeviceType.H16) {
+                KeyManager.cancelListen(h16ChannelsListener)
+                KeyManager.listen(RemoteControllerKey.KeyH16Channels, h16ChannelsListener)
+            } else {
+                rcPollHandler.post(rcPollRunnable)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start RC channel polling", e)
+        }
+    }
+
+    private fun stopSpeedChannelPolling() {
+        rcPollingEnabled = false
+        rcPollHandler.removeCallbacks(rcPollRunnable)
+
+        try {
+            KeyManager.cancelListen(h16ChannelsListener)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun pollRcChannelsOnce() {
+        try {
+            KeyManager.get(RemoteControllerKey.KeyChannels, object : CompletionCallbackWith<IntArray> {
+                override fun onSuccess(value: IntArray?) {
+                    updateSpeedFromChannels(value)
+                }
+
+                override fun onFailure(e: SkyException) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastRcFailureLogTimeMs > RC_FAILURE_LOG_INTERVAL_MS) {
+                        lastRcFailureLogTimeMs = now
+                        Log.w(TAG, "Failed to read RC channels: $e")
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            val now = System.currentTimeMillis()
+            if (now - lastRcFailureLogTimeMs > RC_FAILURE_LOG_INTERVAL_MS) {
+                lastRcFailureLogTimeMs = now
+                Log.w(TAG, "RC channel poll exception", e)
+            }
+        }
+    }
+
+    private fun updateSpeedFromChannels(channels: IntArray?) {
+        if (channels == null || channels.size < 12) return
+
+        val ch12 = channels[11]
+        val level = speedLevelFromCh12(ch12)
+
+        runOnUiThread {
+            updateSpeedBubbleUi(level)
+        }
+    }
+
+    private fun speedLevelFromCh12(ch12: Int): Int {
+        val clamped = ch12.coerceIn(CH_MIN, CH_MAX)
+        val sectionWidth = (CH_MAX - CH_MIN).toFloat() / SPEED_LEVEL_COUNT.toFloat()
+
+        return ((clamped - CH_MIN) / sectionWidth).toInt().coerceIn(0, SPEED_LEVEL_COUNT - 1)
+    }
+
+    private fun updateSpeedBubbleUi(level: Int) {
+        val activeLevel = level.coerceIn(0, SPEED_LEVEL_COUNT - 1)
+
+        if (activeLevel == lastSpeedLevel && speedBubbles.isNotEmpty()) return
+
+        lastSpeedLevel = activeLevel
+
+        speedBubbles.forEachIndexed { index, view ->
+            val active = index == activeLevel
+            view.background = makeSpeedBubbleBackground(active)
+            view.setTextColor(if (active) Color.WHITE else Color.LTGRAY)
+            view.text = index.toString()
+        }
+    }
+
+    private fun makeSpeedBubbleBackground(active: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (active) Color.rgb(106, 53, 255) else Color.rgb(48, 48, 48))
+            setStroke(
+                if (active) 3 else 1,
+                if (active) Color.WHITE else Color.rgb(120, 120, 120)
+            )
+        }
+    }
+
+    private fun currentSpeedText(): String {
+        return if (lastSpeedLevel >= 0) lastSpeedLevel.toString() else "0"
+    }
+
     private fun setStatus(text: String) {
         runOnUiThread { status.text = text }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        stopSpeedChannelPolling()
+
+        try {
+            RCSDKManager.disconnectRC()
+        } catch (_: Exception) {
+        }
+
         videoGrid.stopAll(clearLabels = true)
         udpSender.close()
     }
 
     companion object {
+        private const val TAG = "TankerMainActivity"
+
         private const val DEFAULT_JETSON_IP = "192.168.144.20"
         private const val DEFAULT_UDP_PORT = 5005
+
+        private const val CH_MIN = 1050
+        private const val CH_MAX = 1950
+        private const val SPEED_LEVEL_COUNT = 6
+
+        // Skydroid demo notes that H12/H12Pro/H30 channel values are GET-based,
+        // so they must be polled. Keep this close to their recommended 100 ms.
+        private const val RC_CHANNEL_POLL_INTERVAL_MS = 120L
+        private const val RC_FAILURE_LOG_INTERVAL_MS = 2000L
     }
 }
