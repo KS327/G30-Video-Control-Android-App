@@ -8,10 +8,13 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.util.Log
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.GridLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -35,6 +38,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoGrid: VideoGridController
     private lateinit var udpTargetButton: Button
     private lateinit var speedBubbles: List<TextView>
+    private lateinit var videoGridView: GridLayout
+    private lateinit var topActionButtons: List<Button>
+    private lateinit var cameraFrames: List<View>
+
+    private val originalCameraFrameParams = mutableMapOf<Int, GridLayout.LayoutParams>()
+    private var enlargedCameraSlot: Int? = null
 
     private val udpSender = UdpCommandSender(host = DEFAULT_JETSON_IP, port = DEFAULT_UDP_PORT)
 
@@ -63,6 +72,26 @@ class MainActivity : AppCompatActivity() {
 
         status = findViewById(R.id.tvStatus)
         udpTargetButton = findViewById(R.id.btnUdpTarget)
+        videoGridView = findViewById(R.id.videoGrid)
+        topActionButtons = listOf(
+            findViewById(R.id.btnScan),
+            findViewById(R.id.btnManualUrls),
+            findViewById(R.id.btnDefaultC12),
+            findViewById(R.id.btnStopVideo)
+        )
+        cameraFrames = listOf(
+            findViewById(R.id.frameCam0),
+            findViewById(R.id.frameCam1),
+            findViewById(R.id.frameCam2),
+            findViewById(R.id.frameCam3)
+        )
+        cameraFrames.forEachIndexed { index, view ->
+            val lp = view.layoutParams
+            if (lp is GridLayout.LayoutParams) {
+                originalCameraFrameParams[index] = GridLayout.LayoutParams(lp)
+            }
+        }
+
         videoGrid = VideoGridController(
             widgets = listOf(findViewById(R.id.fpv0), findViewById(R.id.fpv1), findViewById(R.id.fpv2), findViewById(R.id.fpv3)),
             labels = listOf(findViewById(R.id.tvCam0), findViewById(R.id.tvCam1), findViewById(R.id.tvCam2), findViewById(R.id.tvCam3))
@@ -74,7 +103,8 @@ class MainActivity : AppCompatActivity() {
             findViewById(R.id.speedBubble2),
             findViewById(R.id.speedBubble3),
             findViewById(R.id.speedBubble4),
-            findViewById(R.id.speedBubble5)
+            findViewById(R.id.speedBubble5),
+            findViewById(R.id.speedBubble6)
         )
         updateSpeedBubbleUi(0)
 
@@ -174,21 +204,118 @@ class MainActivity : AppCompatActivity() {
             listOf<View>(findViewById(R.id.frameCam2), findViewById(R.id.fpv2), findViewById(R.id.tvCam2)),
             listOf<View>(findViewById(R.id.frameCam3), findViewById(R.id.fpv3), findViewById(R.id.tvCam3))
         )
+
         tapTargets.forEachIndexed { slot, views ->
             views.forEach { view ->
-                view.setOnClickListener {
-                    scanAndChooseCamera { chosen ->
-                        val current = videoGrid.currentUrl(slot)
-                        if (current == chosen.primaryRtspUrl) {
-                            setStatus("CAM ${slot + 1} already uses ${chosen.ip}; unchanged")
+                val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        if (enlargedCameraSlot == null) {
+                            scanAndReplaceCameraSlot(slot)
                         } else {
-                            videoGrid.play(slot, chosen.primaryRtspUrl)
-                            setStatus("CAM ${slot + 1} replaced with ${chosen.ip}")
+                            val enlarged = enlargedCameraSlot ?: slot
+                            setStatus("CAM ${enlarged + 1} enlarged. Double tap video to return to 4-CAM view.")
                         }
+                        return true
                     }
+
+                    override fun onDoubleTap(e: MotionEvent): Boolean {
+                        toggleCameraEnlarge(slot)
+                        return true
+                    }
+                })
+
+                view.setOnTouchListener { _, event ->
+                    detector.onTouchEvent(event)
+                    true
                 }
             }
         }
+    }
+
+    private fun scanAndReplaceCameraSlot(slot: Int) {
+        scanAndChooseCamera { chosen ->
+            val current = videoGrid.currentUrl(slot)
+            if (current == chosen.primaryRtspUrl) {
+                setStatus("CAM ${slot + 1} already uses ${chosen.ip}; unchanged")
+            } else {
+                videoGrid.play(slot, chosen.primaryRtspUrl)
+                setStatus("CAM ${slot + 1} replaced with ${chosen.ip}")
+            }
+        }
+    }
+
+    private fun toggleCameraEnlarge(slot: Int) {
+        val currentEnlargedSlot = enlargedCameraSlot
+
+        if (currentEnlargedSlot == slot) {
+            exitCameraEnlarge()
+            return
+        }
+
+        if (currentEnlargedSlot != null) {
+            return
+        }
+
+        val url = videoGrid.currentUrl(slot)
+        if (url.isNullOrBlank()) {
+            setStatus("CAM ${slot + 1} has no video. Select a camera first.")
+            return
+        }
+
+        enterCameraEnlarge(slot, url)
+    }
+
+    private fun enterCameraEnlarge(slot: Int, url: String) {
+        enlargedCameraSlot = slot
+
+        topActionButtons.forEach { it.visibility = View.GONE }
+
+        videoGridView.columnCount = 1
+        videoGridView.rowCount = 1
+
+        cameraFrames.forEachIndexed { index, frame ->
+            if (index == slot) {
+                frame.visibility = View.VISIBLE
+                frame.layoutParams = GridLayout.LayoutParams().apply {
+                    width = 0
+                    height = 0
+                    rowSpec = GridLayout.spec(0, 1, 1f)
+                    columnSpec = GridLayout.spec(0, 1, 1f)
+                    setMargins(1, 1, 1, 1)
+                }
+            } else {
+                frame.visibility = View.GONE
+            }
+        }
+
+        videoGridView.requestLayout()
+        setStatus(enlargedTitle(slot, url))
+    }
+
+    private fun exitCameraEnlarge() {
+        val oldSlot = enlargedCameraSlot
+        enlargedCameraSlot = null
+
+        topActionButtons.forEach { it.visibility = View.VISIBLE }
+
+        videoGridView.columnCount = 2
+        videoGridView.rowCount = 2
+
+        cameraFrames.forEachIndexed { index, frame ->
+            frame.visibility = View.VISIBLE
+            originalCameraFrameParams[index]?.let { original ->
+                frame.layoutParams = GridLayout.LayoutParams(original)
+            }
+        }
+
+        videoGridView.requestLayout()
+        setStatus(if (oldSlot != null) "Exited CAM ${oldSlot + 1} enlarged view" else "4-CAM view")
+    }
+
+    private fun enlargedTitle(slot: Int, url: String): String {
+        val ip = Regex("""rtsp://(?:[^@/]+@)?([^:/]+)""").find(url)?.groupValues?.getOrNull(1)
+        val source = ip ?: url
+        return "CAM ${slot + 1} enlarged | $source"
     }
 
     private fun scanAndChooseCamera(onCameraChosen: (CameraScanner.HostCandidate) -> Unit) {
@@ -376,6 +503,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        exitCameraEnlarge()
         stopSpeedChannelPolling()
 
         try {
@@ -395,7 +523,7 @@ class MainActivity : AppCompatActivity() {
 
         private const val CH_MIN = 1050
         private const val CH_MAX = 1950
-        private const val SPEED_LEVEL_COUNT = 6
+        private const val SPEED_LEVEL_COUNT = 7
 
         // Skydroid demo notes that H12/H12Pro/H30 channel values are GET-based,
         // so they must be polled. Keep this close to their recommended 100 ms.
