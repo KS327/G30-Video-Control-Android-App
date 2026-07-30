@@ -155,7 +155,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUdpTargetButton() {
-        udpTargetButton.text = "UDP\n${udpSender.hostText()}"
+        udpTargetButton.text = "UDP"
     }
 
     private fun bindVideoButtons() {
@@ -477,7 +477,7 @@ class MainActivity : AppCompatActivity() {
         speedBubbles.forEachIndexed { index, view ->
             val active = index == activeLevel
             view.background = makeSpeedBubbleBackground(active)
-            view.setTextColor(if (active) Color.WHITE else Color.LTGRAY)
+            view.setTextColor(if (active) Color.BLACK else Color.LTGRAY)
             view.text = index.toString()
         }
     }
@@ -485,11 +485,14 @@ class MainActivity : AppCompatActivity() {
     private fun makeSpeedBubbleBackground(active: Boolean): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(if (active) Color.rgb(106, 53, 255) else Color.rgb(48, 48, 48))
-            setStroke(
-                if (active) 3 else 1,
-                if (active) Color.WHITE else Color.rgb(120, 120, 120)
-            )
+
+            if (active) {
+                setColor(Color.rgb(230, 230, 230))
+                setStroke(2, Color.WHITE)
+            } else {
+                setColor(Color.rgb(80, 80, 80))
+                setStroke(1, Color.rgb(150, 150, 150))
+            }
         }
     }
 

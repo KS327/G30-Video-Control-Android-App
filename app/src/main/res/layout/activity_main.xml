@@ -3,17 +3,17 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#101010">
+    android:background="#080808">
 
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="0dp"
-        android:layout_height="38dp"
+        android:layout_height="40dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
-        android:background="#202020"
+        android:background="#151515"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -24,37 +24,67 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:gravity="center_vertical"
+            android:ellipsize="end"
+            android:singleLine="true"
             android:text="UDP ready: 192.168.144.20:5005"
-            android:textColor="#FFFFFF"
+            android:textColor="#F2F2F2"
             android:textSize="12sp" />
 
         <Button
             android:id="@+id/btnScan"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
-            android:textSize="10sp"
-            android:text="Scan" />
+            android:layout_marginStart="6dp"
+            android:backgroundTint="#5F5F5F"
+            android:minWidth="64dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="Scan"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
 
         <Button
             android:id="@+id/btnManualUrls"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
-            android:textSize="10sp"
-            android:text="Manual URLs" />
+            android:layout_marginStart="6dp"
+            android:backgroundTint="#5F5F5F"
+            android:minWidth="98dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="Manual URLs"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
 
         <Button
             android:id="@+id/btnDefaultC12"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
-            android:textSize="10sp"
-            android:text="C12" />
+            android:layout_marginStart="6dp"
+            android:backgroundTint="#5F5F5F"
+            android:minWidth="54dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="C12"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
 
         <Button
             android:id="@+id/btnStopVideo"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
-            android:textSize="10sp"
-            android:text="Stop Video" />
+            android:layout_marginStart="6dp"
+            android:backgroundTint="#5F5F5F"
+            android:minWidth="92dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="Stop Video"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
     </LinearLayout>
 
     <GridLayout
@@ -87,7 +117,7 @@
                 android:id="@+id/tvCam0"
                 android:layout_width="match_parent"
                 android:layout_height="18dp"
-                android:background="#66000000"
+                android:background="#99000000"
                 android:gravity="center_vertical"
                 android:paddingStart="8dp"
                 android:text="CAM 1: not set"
@@ -113,7 +143,7 @@
                 android:id="@+id/tvCam1"
                 android:layout_width="match_parent"
                 android:layout_height="18dp"
-                android:background="#66000000"
+                android:background="#99000000"
                 android:gravity="center_vertical"
                 android:paddingStart="8dp"
                 android:text="CAM 2: not set"
@@ -139,7 +169,7 @@
                 android:id="@+id/tvCam2"
                 android:layout_width="match_parent"
                 android:layout_height="18dp"
-                android:background="#66000000"
+                android:background="#99000000"
                 android:gravity="center_vertical"
                 android:paddingStart="8dp"
                 android:text="CAM 3: not set"
@@ -165,7 +195,7 @@
                 android:id="@+id/tvCam3"
                 android:layout_width="match_parent"
                 android:layout_height="18dp"
-                android:background="#66000000"
+                android:background="#99000000"
                 android:gravity="center_vertical"
                 android:paddingStart="8dp"
                 android:text="CAM 4: not set"
@@ -177,14 +207,14 @@
     <LinearLayout
         android:id="@+id/controlBar"
         android:layout_width="0dp"
-        android:layout_height="58dp"
+        android:layout_height="62dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp"
-        android:paddingTop="3dp"
-        android:paddingBottom="3dp"
-        android:background="#202020"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:background="#151515"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -193,16 +223,20 @@
             android:id="@+id/btnL2"
             android:layout_width="58dp"
             android:layout_height="48dp"
-            android:textSize="13sp"
-            android:text="L2" />
+            android:backgroundTint="#6A6A6A"
+            android:text="L2"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/btnL1"
             android:layout_width="58dp"
             android:layout_height="48dp"
             android:layout_marginStart="4dp"
-            android:textSize="13sp"
-            android:text="L1" />
+            android:backgroundTint="#6A6A6A"
+            android:text="L1"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
 
         <Space
             android:layout_width="0dp"
@@ -215,108 +249,109 @@
             android:layout_height="48dp"
             android:gravity="center"
             android:orientation="horizontal"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp">
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
 
             <TextView
                 android:id="@+id/tvSpeedLabel"
                 android:layout_width="wrap_content"
-                android:layout_height="28dp"
+                android:layout_height="30dp"
                 android:gravity="center"
                 android:paddingStart="2dp"
-                android:paddingEnd="5dp"
-                android:text="SPD"
-                android:textColor="#DDDDDD"
-                android:textSize="11sp"
+                android:paddingEnd="8dp"
+                android:text="Speed"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble0"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="0"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble1"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="1"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble2"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="2"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble3"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="3"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble4"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="4"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble5"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="5"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/speedBubble6"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp"
                 android:gravity="center"
                 android:text="6"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
         <Button
             android:id="@+id/btnUdpTarget"
-            android:layout_width="112dp"
+            android:layout_width="58dp"
             android:layout_height="48dp"
-            android:layout_marginStart="6dp"
-            android:layout_marginEnd="6dp"
-            android:textSize="9sp"
-            android:text="UDP
-192.168.144.20" />
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:backgroundTint="#6A6A6A"
+            android:text="UDP"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
 
         <Space
             android:layout_width="0dp"
@@ -328,16 +363,20 @@
             android:layout_width="58dp"
             android:layout_height="48dp"
             android:layout_marginStart="4dp"
-            android:textSize="13sp"
-            android:text="R1" />
+            android:backgroundTint="#6A6A6A"
+            android:text="R1"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/btnR2"
             android:layout_width="58dp"
             android:layout_height="48dp"
             android:layout_marginStart="4dp"
-            android:textSize="13sp"
-            android:text="R2" />
+            android:backgroundTint="#6A6A6A"
+            android:text="R2"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
