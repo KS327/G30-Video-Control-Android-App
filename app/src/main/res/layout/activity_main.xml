@@ -3,250 +3,303 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#080808">
+    android:background="@color/industrial_background">
 
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="0dp"
-        android:layout_height="40dp"
-        android:orientation="horizontal"
+        android:layout_height="48dp"
+        android:background="@color/industrial_surface"
         android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:background="#151515"
-        app:layout_constraintTop_toTopOf="parent"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintTop_toTopOf="parent">
 
         <TextView
             android:id="@+id/tvStatus"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:gravity="center_vertical"
             android:ellipsize="end"
+            android:gravity="center_vertical"
             android:singleLine="true"
-            android:text="UDP ready: 192.168.144.20:5005"
-            android:textColor="#F2F2F2"
-            android:textSize="12sp" />
+            android:text="SYSTEM INITIALIZING"
+            android:textColor="@color/industrial_text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnViewMode"
+            style="@style/IndustrialPrimaryButton"
+            android:layout_width="94dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="6dp"
+            android:text="VIEW · FOCUS" />
 
         <Button
             android:id="@+id/btnScan"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
+            style="@style/IndustrialButton"
+            android:layout_width="76dp"
+            android:layout_height="42dp"
             android:layout_marginStart="6dp"
-            android:backgroundTint="#5F5F5F"
-            android:minWidth="64dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:text="Scan"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp" />
+            android:text="SCAN" />
 
         <Button
             android:id="@+id/btnManualUrls"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
+            style="@style/IndustrialButton"
+            android:layout_width="82dp"
+            android:layout_height="42dp"
             android:layout_marginStart="6dp"
-            android:backgroundTint="#5F5F5F"
-            android:minWidth="98dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:text="Manual URLs"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp" />
-
-        <Button
-            android:id="@+id/btnDefaultC12"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
-            android:layout_marginStart="6dp"
-            android:backgroundTint="#5F5F5F"
-            android:minWidth="54dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:text="C12"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp" />
+            android:text="CAMERAS" />
 
         <Button
             android:id="@+id/btnStopVideo"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
+            style="@style/IndustrialDangerButton"
+            android:layout_width="94dp"
+            android:layout_height="42dp"
             android:layout_marginStart="6dp"
-            android:backgroundTint="#5F5F5F"
-            android:minWidth="92dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:text="Stop Video"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp" />
+            android:text="VIDEO STOP" />
     </LinearLayout>
 
-    <GridLayout
-        android:id="@+id/videoGrid"
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/cameraWall"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:columnCount="2"
-        android:rowCount="2"
-        android:padding="2dp"
-        app:layout_constraintTop_toBottomOf="@id/topBar"
+        android:padding="3dp"
         app:layout_constraintBottom_toTopOf="@id/controlBar"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintTop_toBottomOf="@id/topBar">
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideVOneThird"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.3333" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideVTwoThird"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.6667" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideVHalf"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.5" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideVFocus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.76" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideHHalf"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_percent="0.5" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideH20"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_percent="0.2" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideH40"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_percent="0.4" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideH60"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_percent="0.6" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideH80"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_percent="0.8" />
 
         <FrameLayout
             android:id="@+id/frameCam0"
-            android:clickable="true"
-            android:focusable="true"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_rowWeight="1"
-            android:layout_columnWeight="1"
-            android:layout_margin="1dp"
-            android:background="#000000">
+            android:layout_margin="2dp"
+            android:background="@drawable/bg_camera_tile_selected"
+            android:padding="2dp"
+            app:layout_constraintBottom_toTopOf="@id/guideHHalf"
+            app:layout_constraintEnd_toStartOf="@id/guideVOneThird"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
             <com.skydroid.fpvplayer.FPVWidget
                 android:id="@+id/fpv0"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent" />
-            <TextView
-                android:id="@+id/tvCam0"
+
+            <View
+                android:id="@+id/gestureCam0"
                 android:layout_width="match_parent"
-                android:layout_height="18dp"
-                android:background="#99000000"
+                android:layout_height="match_parent"
+                android:layout_marginTop="36dp"
+                android:background="@android:color/transparent"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_camera_header"
                 android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="8dp"
-                android:text="CAM 1: not set"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp" />
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:id="@+id/tvCam0"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="center_vertical"
+                    android:singleLine="true"
+                    android:text="FRONT C12 · OFFLINE"
+                    android:textColor="@color/industrial_text_secondary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnC12Mode"
+                    style="@style/IndustrialPrimaryButton"
+                    android:layout_width="92dp"
+                    android:layout_height="32dp"
+                    android:minHeight="0dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="VISIBLE"
+                    android:textSize="9sp" />
+            </LinearLayout>
         </FrameLayout>
 
         <FrameLayout
             android:id="@+id/frameCam1"
-            android:clickable="true"
-            android:focusable="true"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_rowWeight="1"
-            android:layout_columnWeight="1"
-            android:layout_margin="1dp"
-            android:background="#000000">
-            <com.skydroid.fpvplayer.FPVWidget
-                android:id="@+id/fpv1"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-            <TextView
-                android:id="@+id/tvCam1"
-                android:layout_width="match_parent"
-                android:layout_height="18dp"
-                android:background="#99000000"
-                android:gravity="center_vertical"
-                android:paddingStart="8dp"
-                android:text="CAM 2: not set"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp" />
+            android:layout_margin="2dp"
+            android:background="@drawable/bg_camera_tile"
+            android:padding="2dp"
+            app:layout_constraintBottom_toTopOf="@id/guideHHalf"
+            app:layout_constraintEnd_toStartOf="@id/guideVTwoThird"
+            app:layout_constraintStart_toStartOf="@id/guideVOneThird"
+            app:layout_constraintTop_toTopOf="parent">
+            <com.skydroid.fpvplayer.FPVWidget android:id="@+id/fpv1" android:layout_width="match_parent" android:layout_height="match_parent" />
+            <View android:id="@+id/gestureCam1" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="36dp" android:background="@android:color/transparent" android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/tvCam1" android:layout_width="match_parent" android:layout_height="36dp" android:background="@drawable/bg_camera_header" android:ellipsize="end" android:gravity="center_vertical" android:paddingStart="8dp" android:singleLine="true" android:text="CAMERA 2 · OFFLINE" android:textColor="@color/industrial_text_secondary" android:textSize="11sp" android:textStyle="bold" />
         </FrameLayout>
 
         <FrameLayout
             android:id="@+id/frameCam2"
-            android:clickable="true"
-            android:focusable="true"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_rowWeight="1"
-            android:layout_columnWeight="1"
-            android:layout_margin="1dp"
-            android:background="#000000">
-            <com.skydroid.fpvplayer.FPVWidget
-                android:id="@+id/fpv2"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-            <TextView
-                android:id="@+id/tvCam2"
-                android:layout_width="match_parent"
-                android:layout_height="18dp"
-                android:background="#99000000"
-                android:gravity="center_vertical"
-                android:paddingStart="8dp"
-                android:text="CAM 3: not set"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp" />
+            android:layout_margin="2dp"
+            android:background="@drawable/bg_camera_tile"
+            android:padding="2dp"
+            app:layout_constraintBottom_toTopOf="@id/guideHHalf"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="@id/guideVTwoThird"
+            app:layout_constraintTop_toTopOf="parent">
+            <com.skydroid.fpvplayer.FPVWidget android:id="@+id/fpv2" android:layout_width="match_parent" android:layout_height="match_parent" />
+            <View android:id="@+id/gestureCam2" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="36dp" android:background="@android:color/transparent" android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/tvCam2" android:layout_width="match_parent" android:layout_height="36dp" android:background="@drawable/bg_camera_header" android:ellipsize="end" android:gravity="center_vertical" android:paddingStart="8dp" android:singleLine="true" android:text="CAMERA 3 · OFFLINE" android:textColor="@color/industrial_text_secondary" android:textSize="11sp" android:textStyle="bold" />
         </FrameLayout>
 
         <FrameLayout
             android:id="@+id/frameCam3"
-            android:clickable="true"
-            android:focusable="true"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_rowWeight="1"
-            android:layout_columnWeight="1"
-            android:layout_margin="1dp"
-            android:background="#000000">
-            <com.skydroid.fpvplayer.FPVWidget
-                android:id="@+id/fpv3"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-            <TextView
-                android:id="@+id/tvCam3"
-                android:layout_width="match_parent"
-                android:layout_height="18dp"
-                android:background="#99000000"
-                android:gravity="center_vertical"
-                android:paddingStart="8dp"
-                android:text="CAM 4: not set"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp" />
+            android:layout_margin="2dp"
+            android:background="@drawable/bg_camera_tile"
+            android:padding="2dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/guideVOneThird"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/guideHHalf">
+            <com.skydroid.fpvplayer.FPVWidget android:id="@+id/fpv3" android:layout_width="match_parent" android:layout_height="match_parent" />
+            <View android:id="@+id/gestureCam3" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="36dp" android:background="@android:color/transparent" android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/tvCam3" android:layout_width="match_parent" android:layout_height="36dp" android:background="@drawable/bg_camera_header" android:ellipsize="end" android:gravity="center_vertical" android:paddingStart="8dp" android:singleLine="true" android:text="CAMERA 4 · OFFLINE" android:textColor="@color/industrial_text_secondary" android:textSize="11sp" android:textStyle="bold" />
         </FrameLayout>
-    </GridLayout>
+
+        <FrameLayout
+            android:id="@+id/frameCam4"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="2dp"
+            android:background="@drawable/bg_camera_tile"
+            android:padding="2dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/guideVTwoThird"
+            app:layout_constraintStart_toStartOf="@id/guideVOneThird"
+            app:layout_constraintTop_toTopOf="@id/guideHHalf">
+            <com.skydroid.fpvplayer.FPVWidget android:id="@+id/fpv4" android:layout_width="match_parent" android:layout_height="match_parent" />
+            <View android:id="@+id/gestureCam4" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="36dp" android:background="@android:color/transparent" android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/tvCam4" android:layout_width="match_parent" android:layout_height="36dp" android:background="@drawable/bg_camera_header" android:ellipsize="end" android:gravity="center_vertical" android:paddingStart="8dp" android:singleLine="true" android:text="CAMERA 5 · OFFLINE" android:textColor="@color/industrial_text_secondary" android:textSize="11sp" android:textStyle="bold" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/frameCam5"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="2dp"
+            android:background="@drawable/bg_camera_tile"
+            android:padding="2dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="@id/guideVTwoThird"
+            app:layout_constraintTop_toTopOf="@id/guideHHalf">
+            <com.skydroid.fpvplayer.FPVWidget android:id="@+id/fpv5" android:layout_width="match_parent" android:layout_height="match_parent" />
+            <View android:id="@+id/gestureCam5" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="36dp" android:background="@android:color/transparent" android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/tvCam5" android:layout_width="match_parent" android:layout_height="36dp" android:background="@drawable/bg_camera_header" android:ellipsize="end" android:gravity="center_vertical" android:paddingStart="8dp" android:singleLine="true" android:text="CAMERA 6 · NOT SET" android:textColor="@color/industrial_text_secondary" android:textSize="11sp" android:textStyle="bold" />
+        </FrameLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <LinearLayout
         android:id="@+id/controlBar"
         android:layout_width="0dp"
-        android:layout_height="62dp"
-        android:orientation="horizontal"
+        android:layout_height="68dp"
+        android:background="@color/industrial_surface"
         android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
-        android:background="#151515"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
 
-        <Button
-            android:id="@+id/btnL2"
-            android:layout_width="58dp"
-            android:layout_height="48dp"
-            android:backgroundTint="#6A6A6A"
-            android:text="L2"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
-
-        <Button
-            android:id="@+id/btnL1"
-            android:layout_width="58dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="4dp"
-            android:backgroundTint="#6A6A6A"
-            android:text="L1"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
+        <Button android:id="@+id/btnL2" style="@style/IndustrialButton" android:layout_width="62dp" android:layout_height="48dp" android:text="L2" />
+        <Button android:id="@+id/btnL1" style="@style/IndustrialButton" android:layout_width="62dp" android:layout_height="48dp" android:layout_marginStart="5dp" android:text="L1" />
+        <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
 
         <LinearLayout
             android:id="@+id/speedScaleRow"
             android:layout_width="wrap_content"
-            android:layout_height="48dp"
+            android:layout_height="52dp"
             android:gravity="center"
             android:orientation="horizontal"
             android:paddingStart="8dp"
@@ -255,128 +308,34 @@
             <TextView
                 android:id="@+id/tvSpeedLabel"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
+                android:layout_height="match_parent"
                 android:gravity="center"
-                android:paddingStart="2dp"
                 android:paddingEnd="8dp"
-                android:text="Speed"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
+                android:text="SPEED SETTING"
+                android:textColor="@color/industrial_text_secondary"
+                android:textSize="11sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/speedBubble0"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="0"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/speedBubble1"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="1"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/speedBubble2"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="2"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/speedBubble3"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="3"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/speedBubble4"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="4"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/speedBubble5"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="5"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/speedBubble6"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp"
-                android:gravity="center"
-                android:text="6"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+            <TextView android:id="@+id/speedBubble0" style="@style/SpeedBubble" android:text="0" />
+            <TextView android:id="@+id/speedBubble1" style="@style/SpeedBubble" android:text="1" />
+            <TextView android:id="@+id/speedBubble2" style="@style/SpeedBubble" android:text="2" />
+            <TextView android:id="@+id/speedBubble3" style="@style/SpeedBubble" android:text="3" />
+            <TextView android:id="@+id/speedBubble4" style="@style/SpeedBubble" android:text="4" />
+            <TextView android:id="@+id/speedBubble5" style="@style/SpeedBubble" android:text="5" />
+            <TextView android:id="@+id/speedBubble6" style="@style/SpeedBubble" android:text="6" />
         </LinearLayout>
 
         <Button
             android:id="@+id/btnUdpTarget"
-            android:layout_width="58dp"
+            style="@style/IndustrialPrimaryButton"
+            android:layout_width="84dp"
             android:layout_height="48dp"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:backgroundTint="#6A6A6A"
-            android:text="UDP"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:text="LOCAL" />
 
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <Button
-            android:id="@+id/btnR1"
-            android:layout_width="58dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="4dp"
-            android:backgroundTint="#6A6A6A"
-            android:text="R1"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
-
-        <Button
-            android:id="@+id/btnR2"
-            android:layout_width="58dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="4dp"
-            android:backgroundTint="#6A6A6A"
-            android:text="R2"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
+        <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <Button android:id="@+id/btnR1" style="@style/IndustrialButton" android:layout_width="62dp" android:layout_height="48dp" android:text="R1" />
+        <Button android:id="@+id/btnR2" style="@style/IndustrialButton" android:layout_width="62dp" android:layout_height="48dp" android:layout_marginStart="5dp" android:text="R2" />
     </LinearLayout>
-
 </androidx.constraintlayout.widget.ConstraintLayout>

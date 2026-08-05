@@ -30,22 +30,28 @@ class CameraScanner {
          * lower latency, and fewer gray/distorted frames than the 1080P main stream.
          * Change DEFAULT_STREAM to 0 if maximum image quality is more important than four-grid stability.
          */
-        private const val DEFAULT_STREAM = 0
+        private const val DEFAULT_STREAM = 1
+
+        const val C12_IP = "192.168.144.108"
+        const val C12_VISIBLE_URL = "rtsp://$C12_IP:554/stream=1"
+        const val C12_THERMAL_URL = "rtsp://$C12_IP:555/stream=2"
 
         fun buildXmEyeRtspUrl(ip: String, stream: Int = DEFAULT_STREAM): String {
             return "rtsp://admin:@$ip:554/user=admin&password=&channel=1&stream=$stream.sdp"
         }
 
-        fun defaultFourCameraUrls(): List<String> = listOf(
+        fun defaultSixCameraUrls(): List<String> = listOf(
+            C12_VISIBLE_URL,
             buildXmEyeRtspUrl("192.168.144.100"),
             buildXmEyeRtspUrl("192.168.144.110"),
             buildXmEyeRtspUrl("192.168.144.130"),
-            buildXmEyeRtspUrl("192.168.144.120")
+            buildXmEyeRtspUrl("192.168.144.120"),
+            ""
         )
     }
 
     private fun scanIp(ip: String): HostCandidate? {
-        val ports = listOf(554, 80, 8899, 34567, 8554, 8080)
+        val ports = listOf(554, 555, 80, 8899, 34567, 8554, 8080)
         val open = ports.filter { tcpOpen(ip, it, timeoutMs = 220) }
         if (open.isEmpty()) return null
 
@@ -60,6 +66,7 @@ class CameraScanner {
                 add("rtsp://$ip:554/user=admin&password=&channel=1&stream=1.sdp")
                 add("rtsp://$ip:554/stream=1")
             }
+            if (555 in open) add("rtsp://$ip:555/stream=2")
             if (8554 in open) add("rtsp://$ip:8554/live")
         }.distinct()
 

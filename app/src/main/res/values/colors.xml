@@ -1,4 +1,17 @@
 <resources>
     <color name="black">#000000</color>
     <color name="white">#FFFFFF</color>
+
+    <color name="industrial_background">#0B0F14</color>
+    <color name="industrial_surface">#121821</color>
+    <color name="industrial_surface_raised">#18212B</color>
+    <color name="industrial_border">#2A3642</color>
+    <color name="industrial_primary">#3B82F6</color>
+    <color name="industrial_primary_dark">#1D4ED8</color>
+    <color name="industrial_success">#2FB344</color>
+    <color name="industrial_warning">#F59F00</color>
+    <color name="industrial_danger">#E03131</color>
+    <color name="industrial_text_primary">#F5F7FA</color>
+    <color name="industrial_text_secondary">#9AA8B6</color>
+    <color name="industrial_video_background">#030507</color>
 </resources>
