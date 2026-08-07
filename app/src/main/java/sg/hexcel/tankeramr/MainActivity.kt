@@ -110,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         preferences = getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+        udpSender.setTarget(localJetsonHost(), DEFAULT_UDP_PORT)
         status = findViewById(R.id.tvStatus)
         cameraWall = findViewById(R.id.cameraWall)
         viewModeButton = findViewById(R.id.btnViewMode)
@@ -174,8 +175,8 @@ class MainActivity : AppCompatActivity() {
 
         udpSender.start(this) { setStatus(it) }
         telemetryReceiver.start(
-            onTelemetry = { speed, roll, pitch, source -> runOnUiThread {
-                renderOperatorState(operatorControl.updateTelemetry(speed, roll, pitch, source))
+            onTelemetry = { packet -> runOnUiThread {
+                renderOperatorState(operatorControl.updateRemote(packet))
             } },
             onError = { setStatus(it) }
         )
@@ -193,9 +194,35 @@ class MainActivity : AppCompatActivity() {
             ?.takeUnless { it == ViewMode.FULLSCREEN }
             ?: ViewMode.FOCUS
         previousViewMode = currentViewMode
-        c12Mode = preferences.getString(PREF_C12_MODE, C12Mode.VISIBLE.name)
-            ?.let { runCatching { C12Mode.valueOf(it) }.getOrNull() }
-            ?: C12Mode.VISIBLE
+        // Deterministic operator startup: always begin with the visible C12 feed.
+        // THERMAL remains available as a session toggle but is never restored after relaunch.
+        c12Mode = C12Mode.VISIBLE
+        migrateCameraConfiguration()
+    }
+
+    private fun migrateCameraConfiguration() {
+        if (preferences.getInt(PREF_CAMERA_SCHEMA, 0) >= CAMERA_SCHEMA_VERSION) return
+        val defaults = CameraScanner.defaultSixCameraUrls()
+        val existing = (1..4).map { preferences.getString(cameraUrlKey(it), null)?.trim().orEmpty() }
+        val knownAssignments = existing.map { url ->
+            CameraScanner.VERIFIED_IP_CAMERA_IPS.firstOrNull { ip -> url.contains(ip) }
+        }
+        val onlyKnownOrBlank = existing.zip(knownAssignments).all { (url, ip) -> url.isBlank() || ip != null }
+        val knownLayoutIsInvalid = knownAssignments.any { it == null } ||
+            knownAssignments.filterNotNull().distinct().size != CameraScanner.VERIFIED_IP_CAMERA_IPS.size
+        preferences.edit().apply {
+            // Repair duplicate/missing assignments only when all saved entries belong to
+            // the known TankerAMR camera set. Unrelated custom RTSP URLs are preserved.
+            for (slot in 1..4) {
+                val key = cameraUrlKey(slot)
+                val current = existing[slot - 1]
+                val migrated = if (onlyKnownOrBlank && knownLayoutIsInvalid) defaults[slot]
+                else if (current.isBlank()) defaults[slot]
+                else CameraScanner.preferMainStream(current)
+                putString(key, migrated)
+            }
+            putInt(PREF_CAMERA_SCHEMA, CAMERA_SCHEMA_VERSION)
+        }.apply()
     }
 
     private fun loadCameraUrls(): List<String> {
@@ -235,7 +262,6 @@ class MainActivity : AppCompatActivity() {
     private fun bindVideoButtons() {
         c12ModeButton.setOnClickListener {
             c12Mode = if (c12Mode == C12Mode.VISIBLE) C12Mode.THERMAL else C12Mode.VISIBLE
-            preferences.edit().putString(PREF_C12_MODE, c12Mode.name).apply()
             updateC12Button()
             val shouldPlay = !videoStoppedByOperator && 0 in visibleSlots(currentViewMode)
             videoGrid.setUrl(0, c12Url(), playNow = shouldPlay)
@@ -283,8 +309,18 @@ class MainActivity : AppCompatActivity() {
                 if (!videoStoppedByOperator) videoGrid.playVisible(visibleSlots(currentViewMode))
                 setStatus("Saved ${urls.count { it.isNotBlank() }} configured camera endpoints")
             }
+            .setNeutralButton("Restore verified") { _, _ -> restoreVerifiedCameraLayout() }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun restoreVerifiedCameraLayout() {
+        val urls = CameraScanner.defaultSixCameraUrls().toMutableList().also { it[0] = c12Url() }
+        saveCameraUrls(urls)
+        preferences.edit().putInt(PREF_CAMERA_SCHEMA, CAMERA_SCHEMA_VERSION).apply()
+        videoGrid.setUrls(urls)
+        if (!videoStoppedByOperator) videoGrid.playVisible(visibleSlots(currentViewMode))
+        setStatus("Restored C12 and four verified 1080p IP cameras")
     }
 
     private fun bindCameraGestures() {
@@ -488,9 +524,11 @@ class MainActivity : AppCompatActivity() {
             AlertDialog.Builder(this)
                 .setTitle("Manual connection route")
                 .setItems(arrayOf(
-                    "LOCAL · $DEFAULT_JETSON_IP",
+                    "LOCAL · ${localJetsonHost()}",
                     "INTERNET · Tailscale VPN",
+                    "Configure LOCAL address",
                     "Configure INTERNET address",
+                    "Test current connection",
                     "Safety: route changes require CH05 up"
                 )) { _, which ->
                     when (which) {
@@ -500,13 +538,49 @@ class MainActivity : AppCompatActivity() {
                             if (host.isBlank()) showInternetEndpointEditor()
                             else selectOperatorRoute(ConnectionRoute.INTERNET)
                         }
-                        2 -> showInternetEndpointEditor()
+                        2 -> showLocalEndpointEditor()
+                        3 -> showInternetEndpointEditor()
+                        4 -> sendProductionCommand("ping")
                         else -> setStatus("Route change applies a 0.5 s neutral interlock")
                     }
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+    }
+
+    private fun localJetsonHost(): String =
+        preferences.getString(PREF_LOCAL_HOST, DEFAULT_JETSON_IP)?.trim().orEmpty()
+            .ifBlank { DEFAULT_JETSON_IP }
+
+    private fun showLocalEndpointEditor() {
+        val input = EditText(this).apply {
+            hint = "Jetson Ethernet IP"
+            setSingleLine(true)
+            setText(localJetsonHost())
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSelectAllOnFocus(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("LOCAL Jetson endpoint")
+            .setMessage("Default: $DEFAULT_JETSON_IP. Commands use UDP port $DEFAULT_UDP_PORT.")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val host = input.text.toString().trim()
+                if (host.isBlank()) setStatus("LOCAL endpoint unchanged: address is empty")
+                else {
+                    preferences.edit().putString(PREF_LOCAL_HOST, host).apply()
+                    if (operatorSnapshot.route == ConnectionRoute.LOCAL) udpSender.setTarget(host, DEFAULT_UDP_PORT)
+                    setStatus("LOCAL endpoint saved: $host:$DEFAULT_UDP_PORT")
+                }
+            }
+            .setNeutralButton("Restore default") { _, _ ->
+                preferences.edit().putString(PREF_LOCAL_HOST, DEFAULT_JETSON_IP).apply()
+                udpSender.setTarget(DEFAULT_JETSON_IP, DEFAULT_UDP_PORT)
+                setStatus("LOCAL endpoint restored: $DEFAULT_JETSON_IP:$DEFAULT_UDP_PORT")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showInternetEndpointEditor() {
@@ -561,7 +635,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindDebugSimulatorControls() {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.CONTROL_SIMULATOR) return
         controlState.setOnClickListener {
             val choices = arrayOf(
                 "UP · MANUAL",
@@ -597,7 +671,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendProductionCommand(type: String, payload: JSONObject = JSONObject()) {
-        if (!BuildConfig.DEBUG) udpSender.send(ControlProtocol.command(++commandSequence, type, payload))
+        if (!BuildConfig.CONTROL_SIMULATOR) udpSender.send(ControlProtocol.command(++commandSequence, type, payload))
     }
 
     private fun scanAndChooseCamera(onCameraChosen: (CameraScanner.HostCandidate) -> Unit) {
@@ -638,7 +712,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindTurnButton(button: Button, turnButton: TurnButton) {
         button.setOnClickListener {
-            renderOperatorState(operatorControl.enqueueTurn(turnButton))
+            if (BuildConfig.CONTROL_SIMULATOR) {
+                renderOperatorState(operatorControl.enqueueTurn(turnButton))
+            } else {
+                udpSender.send(ControlProtocol.turn(++commandSequence, turnButton))
+                setStatus("${turnButton.shortName} turn request sent")
+            }
         }
     }
 
@@ -734,7 +813,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateSpeedFromChannels(channels: IntArray?) {
         if (channels == null || channels.size < 12) return
         val effectiveChannels = channels.copyOf().also { values ->
-            if (BuildConfig.DEBUG) debugCh05Override?.let { values[4] = it }
+            if (BuildConfig.CONTROL_SIMULATOR) debugCh05Override?.let { values[4] = it }
         }
         val now = System.currentTimeMillis()
         if (BuildConfig.DEBUG && now - lastRcChannelsLogTimeMs >= RC_CHANNEL_LOG_INTERVAL_MS) {
@@ -744,9 +823,11 @@ class MainActivity : AppCompatActivity() {
         val level = speedLevelFromCh12(channels[11])
         runOnUiThread {
             updateSpeedBubbleUi(level)
-            renderOperatorState(operatorControl.updateChannels(effectiveChannels))
-            if (!BuildConfig.DEBUG && operatorSnapshot.ch05 == Ch05Position.UP_MANUAL &&
-                (operatorSnapshot.route == ConnectionRoute.LOCAL || operatorSnapshot.internetArmed)) {
+            if (BuildConfig.CONTROL_SIMULATOR) {
+                renderOperatorState(operatorControl.updateChannels(effectiveChannels))
+            }
+            if (!BuildConfig.CONTROL_SIMULATOR && operatorSnapshot.ch05 == Ch05Position.UP_MANUAL &&
+                operatorSnapshot.route == ConnectionRoute.INTERNET && operatorSnapshot.internetArmed) {
                 udpSender.send(ControlProtocol.rcChannels(++commandSequence, effectiveChannels))
             }
         }
@@ -754,7 +835,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderOperatorState(snapshot: OperatorSnapshot) {
         operatorSnapshot = snapshot
-        val host = if (snapshot.route == ConnectionRoute.LOCAL) DEFAULT_JETSON_IP
+        val host = if (snapshot.route == ConnectionRoute.LOCAL) localJetsonHost()
         else preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
         if (host.isNotBlank()) udpSender.setTarget(host, DEFAULT_UDP_PORT)
 
@@ -765,16 +846,16 @@ class MainActivity : AppCompatActivity() {
             Ch05Position.UNKNOWN -> "RC CHANNELS UNKNOWN"
         }
         val ch05Diagnostic = snapshot.ch05Raw?.let { " · CH05 $it" }.orEmpty()
-        val simulationLabel = if (BuildConfig.DEBUG) {
+        val simulationLabel = if (BuildConfig.CONTROL_SIMULATOR) {
             if (debugCh05Override == null) "SIMULATOR · TAP FOR SIM CH05" else "SIM CH05 OVERRIDE · TAP TO CHANGE"
-        } else snapshot.telemetrySource
+        } else "LIVE · ${snapshot.telemetrySource}"
         controlState.text = "$source$ch05Diagnostic\n$simulationLabel"
         controlState.setTextColor(ContextCompat.getColor(this,
-            if (BuildConfig.DEBUG) R.color.industrial_warning else R.color.industrial_text_primary))
+            if (BuildConfig.CONTROL_SIMULATOR) R.color.industrial_warning else R.color.industrial_success))
 
-        val displaySpeed = snapshot.speedMetresPerSecond ?: if (BuildConfig.DEBUG) 0.0 else null
-        val displayRoll = snapshot.rollDegrees ?: if (BuildConfig.DEBUG) 0.0 else null
-        val displayPitch = snapshot.pitchDegrees ?: if (BuildConfig.DEBUG) 0.0 else null
+        val displaySpeed = snapshot.speedMetresPerSecond ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
+        val displayRoll = snapshot.rollDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
+        val displayPitch = snapshot.pitchDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
         val speed = displaySpeed?.let { "%.2f m/s".format(it) } ?: "—"
         telemetry.text = "SPEED $speed   ROLL ${ControlProtocol.direction(displayRoll, "LEFT", "RIGHT")}   " +
             "PITCH ${ControlProtocol.direction(displayPitch, "BACKWARD", "FORWARD")}"
@@ -800,9 +881,6 @@ class MainActivity : AppCompatActivity() {
         listOf<Button>(findViewById(R.id.btnL2), findViewById(R.id.btnL1), findViewById(R.id.btnR1), findViewById(R.id.btnR2))
             .forEach { it.isEnabled = manualTurnsEnabled }
 
-        if (snapshot.activeTurn != null && snapshot.activeTurn != lastActiveTurn) {
-            if (!BuildConfig.DEBUG) udpSender.send(ControlProtocol.turn(++commandSequence, snapshot.activeTurn))
-        }
         lastActiveTurn = snapshot.activeTurn
         setStatus(snapshot.message)
     }
@@ -865,8 +943,10 @@ class MainActivity : AppCompatActivity() {
         private const val PREFERENCES_NAME = "tanker_operator_settings"
         private const val PREF_VIEW_MODE = "camera_view_mode"
         private const val PREF_FOCUSED_CAMERA = "focused_camera"
-        private const val PREF_C12_MODE = "c12_mode"
+        private const val PREF_LOCAL_HOST = "local_jetson_host"
         private const val PREF_INTERNET_HOST = "internet_jetson_host"
+        private const val PREF_CAMERA_SCHEMA = "camera_config_schema"
+        private const val CAMERA_SCHEMA_VERSION = 2
         private fun cameraUrlKey(slot: Int) = "camera_url_$slot"
 
         private const val CH_MIN = 1050

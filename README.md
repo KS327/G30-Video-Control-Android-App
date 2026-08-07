@@ -26,11 +26,11 @@ Commands and telemetry use versioned JSON (`v: 1`). Telemetry payload fields are
 
 Debug APKs never send Tanker movement commands. Tap the amber control-state label and select simulated
 CH05 up, middle, or down to test the complete G30 workflow without a powered TankerAMR. The screen is
-clearly marked `SIMULATOR` / `SIM CH05 OVERRIDE`. Release builds use real RCSDK channels and UDP transport.
+clearly marked `SIMULATOR` / `SIM CH05 OVERRIDE`. Commissioning and release builds trust authoritative
+Jetson SBUS telemetry for CH05; RCSDK channels are sent only for armed INTERNET manual control.
 
-The connected G30 currently reports output CH05 as a constant 1500 through RCSDK even when the physical
-switch is moved. Validate the authoritative CH05 mapping against Jetson SBUS telemetry during integrated
-TankerAMR commissioning before enabling a release build.
+The connected G30 reports CH05 unreliably through RCSDK. Jetson SBUS is the safety authority:
+282=AUTONOMOUS/down, 1002=disabled/middle, and 1722=manual/up.
 
 ## Required AAR files
 
@@ -43,43 +43,32 @@ Copy these proprietary Skydroid AAR files into `app/libs/` before building:
 
 ## Default camera URLs
 
-The app default manual URLs use the confirmed JINGYANG/XM pattern with stream=1:
+The four installed IP cameras use their verified HEVC 1920x1080 @ 25 fps main stream:
 
-`rtsp://admin:@<IP>:554/user=admin&password=&channel=1&stream=1.sdp`
+`rtsp://admin:@<IP>:554/user=admin&password=&channel=1&stream=0.sdp`
 
 Default camera order:
 
 1. FRONT C12 (`192.168.144.108`)
-2. CAMERA 2
-3. CAMERA 3
-4. CAMERA 4
-5. CAMERA 5 (optional)
-6. CAMERA 6 (optional)
+2. CAMERA 2 (`192.168.144.100`)
+3. CAMERA 3 (`192.168.144.110`)
+4. CAMERA 4 (`192.168.144.130`)
+5. CAMERA 5 (`192.168.144.120`)
+6. CAMERA 6 (reserved)
 
-Use stream=0 if maximum quality is required and the G30 can decode all four streams stably.
+C12 starts on visible video after every fresh app launch. The CAMERAS editor provides
+`RESTORE VERIFIED` to recover the unique 1080p camera mapping.
 
-## Jetson secondary IP service
+## Jetson network and runtime
 
-Files are included under `jetson/`:
-
-- `add_tankeramr_camera_ip.sh`
-- `tankeramr-camera-ip.service`
-
-Install on Jetson:
-
-```bash
-sudo cp jetson/add_tankeramr_camera_ip.sh /usr/local/sbin/add_tankeramr_camera_ip.sh
-sudo chmod +x /usr/local/sbin/add_tankeramr_camera_ip.sh
-sudo cp jetson/tankeramr-camera-ip.service /etc/systemd/system/tankeramr-camera-ip.service
-sudo systemctl daemon-reload
-sudo systemctl enable tankeramr-camera-ip.service
-sudo systemctl start tankeramr-camera-ip.service
-ip -4 addr show dev enP8p1s0
-```
-
-Expected Ethernet addresses after boot:
+Expected Ethernet addresses:
 
 - `192.168.1.50/24` for LiDAR
 - `192.168.144.20/24` for cameras and G30 UDP control
 
 No gateway is added for 192.168.144.20.
+
+The deployed runtime is organized under `/home/jetson/KinSen`, with settings in
+`config/settings.json`, runtime state in `run/`, logs in `logs/`, and timestamped rollback copies in
+`backups/`. Livox, FAST-LIO and scan conversion are always-on telemetry services. Nav2 and Collision
+Monitor are separately managed by START/STOP AUTONOMOUS.

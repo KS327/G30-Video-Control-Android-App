@@ -116,13 +116,23 @@ class OperatorControl(private val now: () -> Long = System::currentTimeMillis) {
         return state
     }
 
-    fun updateTelemetry(speedMps: Double, rollDeg: Double, pitchDeg: Double, source: String): OperatorSnapshot {
+    fun updateRemote(packet: TelemetryPacket): OperatorSnapshot {
         lastTelemetryAt = now()
+        lastCh05 = packet.ch05
         state = state.copy(
-            speedMetresPerSecond = speedMps,
-            rollDegrees = rollDeg,
-            pitchDegrees = pitchDeg,
-            telemetrySource = source.ifBlank { "JETSON" }
+            speedMetresPerSecond = packet.speedMps,
+            rollDegrees = packet.rollDeg,
+            pitchDegrees = packet.pitchDeg,
+            telemetrySource = packet.source.ifBlank { "JETSON" },
+            ch05 = packet.ch05,
+            ch05Raw = packet.ch05Raw,
+            route = packet.route,
+            internetArmed = packet.internetArmed,
+            autonomousState = packet.autonomousState,
+            autonomousArmed = packet.autonomousArmed,
+            queuedTurns = packet.queuedTurns,
+            activeTurn = packet.activeTurn,
+            message = packet.message
         )
         return state
     }

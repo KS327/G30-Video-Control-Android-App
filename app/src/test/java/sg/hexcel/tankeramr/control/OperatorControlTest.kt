@@ -56,7 +56,21 @@ class OperatorControlTest {
 
     @Test fun telemetryBecomesStaleAfterTimeout() {
         val control = OperatorControl { clock }
-        control.updateTelemetry(1.25, -12.0, 7.0, "LIVOX_FASTLIO")
+        control.updateRemote(TelemetryPacket(
+            speedMps = 1.25,
+            rollDeg = -12.0,
+            pitchDeg = 7.0,
+            source = "LIVOX_FASTLIO",
+            ch05 = Ch05Position.MIDDLE_SAFE,
+            ch05Raw = 1500,
+            route = ConnectionRoute.LOCAL,
+            internetArmed = false,
+            autonomousState = AutonomousState.STOPPED,
+            autonomousArmed = false,
+            queuedTurns = 0,
+            activeTurn = null,
+            message = "Connected"
+        ))
         assertEquals(1.25, control.snapshot().speedMetresPerSecond!!, 0.0)
         clock = 1600
         val stale = control.tick()
