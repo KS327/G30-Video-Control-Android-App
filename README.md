@@ -7,14 +7,16 @@ Android operator app for Skydroid G30:
 - Uses the C12 visible stream on port 554 and thermal stream on port 555.
 - Shows speed, roll and pitch telemetry received from Jetson.
 - Provides CH05-gated LOCAL/INTERNET manual routing and LOCAL-only AUTONOMOUS controls.
-- Queues at most six immediate 90-degree turn taps, including the active turn.
+- Shows the authoritative number of pending 90-degree turns and queues at most six, including the active turn.
 
 ## Safety and control model
 
 - CH05 up: manual control. LOCAL is the default; INTERNET requires arming.
 - CH05 middle: hard-safe state. Arms and queued turns are cleared; LOCAL is restored after 0.5 seconds.
 - CH05 down: AUTONOMOUS only. Leaving down always disarms it, but a READY process remains running.
-- `START AUTONOMOUS` is available only in middle/down and changes to `STOP AUTONOMOUS` after startup.
+- `START AUTONOMOUS` is hidden while CH05 is up, requires confirmation, and changes to `STOP AUTONOMOUS` only after Jetson reports READY.
+- Start/stop completion dialogs use authoritative Jetson state. Stopping Nav2 and Collision Monitor leaves Livox, FAST-LIO, speed and tilt telemetry active.
+- LOCAL/INTERNET route changes are sent through the currently reachable route; returning to LOCAL also sends a recovery copy to the configured LAN address.
 - LOCAL Jetson command endpoint: `192.168.144.20:5005`.
 - Jetson telemetry listener: UDP port `5006`.
 - INTERNET address is explicitly configured by the operator; the app never guesses a Tailscale IP.

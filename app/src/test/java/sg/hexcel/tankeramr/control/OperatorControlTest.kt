@@ -68,6 +68,7 @@ class OperatorControlTest {
             autonomousState = AutonomousState.STOPPED,
             autonomousArmed = false,
             queuedTurns = 0,
+            totalTurns = 0,
             activeTurn = null,
             message = "Connected"
         ))

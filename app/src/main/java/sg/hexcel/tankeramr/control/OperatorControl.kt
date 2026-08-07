@@ -18,6 +18,7 @@ data class OperatorSnapshot(
     val autonomousArmed: Boolean = false,
     val neutralInterlock: Boolean = false,
     val queuedTurns: Int = 0,
+    val totalTurns: Int = 0,
     val activeTurn: TurnButton? = null,
     val speedMetresPerSecond: Double? = null,
     val rollDegrees: Double? = null,
@@ -106,7 +107,8 @@ class OperatorControl(private val now: () -> Long = System::currentTimeMillis) {
         val total = turnQueue.size + if (state.activeTurn != null) 1 else 0
         if (total >= MAX_TOTAL_TURNS) return reject("QUEUE FULL (6/6)")
         turnQueue.addLast(turn)
-        state = state.copy(queuedTurns = turnQueue.size, message = "${turn.shortName} queued (${total + 1}/6)")
+        state = state.copy(queuedTurns = turnQueue.size, totalTurns = total + 1,
+            message = "${turn.shortName} queued (${total + 1}/6)")
         return tick()
     }
 
@@ -131,6 +133,7 @@ class OperatorControl(private val now: () -> Long = System::currentTimeMillis) {
             autonomousState = packet.autonomousState,
             autonomousArmed = packet.autonomousArmed,
             queuedTurns = packet.queuedTurns,
+            totalTurns = packet.totalTurns,
             activeTurn = packet.activeTurn,
             message = packet.message
         )
@@ -157,10 +160,11 @@ class OperatorControl(private val now: () -> Long = System::currentTimeMillis) {
         if (state.activeTurn == null && turnQueue.isNotEmpty() && t >= turnGapUntil && manualUiPermitted()) {
             val next = turnQueue.removeFirst()
             state = state.copy(activeTurn = next, queuedTurns = turnQueue.size,
-                message = "Executing ${next.shortName}")
+                totalTurns = turnQueue.size + 1, message = "Executing ${next.shortName}")
             activeTurnUntil = t + TURN_DURATION_MS
         } else {
-            state = state.copy(queuedTurns = turnQueue.size)
+            state = state.copy(queuedTurns = turnQueue.size,
+                totalTurns = turnQueue.size + if (state.activeTurn != null) 1 else 0)
         }
         return state
     }
@@ -174,7 +178,7 @@ class OperatorControl(private val now: () -> Long = System::currentTimeMillis) {
         turnQueue.clear()
         activeTurnUntil = 0L
         turnGapUntil = 0L
-        state = state.copy(activeTurn = null, queuedTurns = 0, message = reason)
+        state = state.copy(activeTurn = null, queuedTurns = 0, totalTurns = 0, message = reason)
     }
 
     companion object {

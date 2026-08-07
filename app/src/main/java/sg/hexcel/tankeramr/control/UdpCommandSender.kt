@@ -28,8 +28,10 @@ class UdpCommandSender(
     }
 
     override fun send(text: String) {
-        val targetHost = host
-        val targetPort = port
+        sendTo(host, port, text)
+    }
+
+    fun sendTo(targetHost: String, targetPort: Int, text: String) {
         thread(name = "udp-command-send", isDaemon = true) {
             try {
                 DatagramSocket().use { socket ->

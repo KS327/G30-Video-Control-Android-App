@@ -46,6 +46,7 @@ import sg.hexcel.tankeramr.video.VideoGridController
 class MainActivity : AppCompatActivity() {
     private enum class ViewMode { FOCUS, FOUR, SIX, FULLSCREEN }
     private enum class C12Mode { VISIBLE, THERMAL }
+    private enum class PendingAutonomousAction { START, STOP }
 
     private lateinit var status: TextView
     private lateinit var cameraWall: ConstraintLayout
@@ -78,10 +79,13 @@ class MainActivity : AppCompatActivity() {
     private var lastActiveTurn: TurnButton? = null
     private var commandSequence = 0L
     private var debugCh05Override: Int? = null
+    private var pendingAutonomousAction: PendingAutonomousAction? = null
 
     private val operatorTickRunnable = object : Runnable {
         override fun run() {
-            renderOperatorState(operatorControl.tick())
+            val snapshot = operatorControl.tick()
+            renderOperatorState(snapshot)
+            if (BuildConfig.CONTROL_SIMULATOR) handleAutonomousCompletion(snapshot)
             rcPollHandler.postDelayed(this, OPERATOR_TICK_MS)
         }
     }
@@ -176,7 +180,9 @@ class MainActivity : AppCompatActivity() {
         udpSender.start(this) { setStatus(it) }
         telemetryReceiver.start(
             onTelemetry = { packet -> runOnUiThread {
-                renderOperatorState(operatorControl.updateRemote(packet))
+                val snapshot = operatorControl.updateRemote(packet)
+                renderOperatorState(snapshot)
+                handleAutonomousCompletion(snapshot)
             } },
             onError = { setStatus(it) }
         )
@@ -617,13 +623,18 @@ class MainActivity : AppCompatActivity() {
             }
         }
         autonomousProcessButton.setOnClickListener {
-            val before = operatorControl.snapshot().autonomousState
-            val result = operatorControl.toggleAutonomousProcess()
-            renderOperatorState(result)
-            if (result.autonomousState != before) sendProductionCommand(
-                "autonomous_process",
-                JSONObject().put("action", if (result.autonomousState == AutonomousState.STARTING) "start" else "stop")
-            )
+            if (BuildConfig.CONTROL_SIMULATOR) {
+                val before = operatorControl.snapshot().autonomousState
+                val result = operatorControl.toggleAutonomousProcess()
+                renderOperatorState(result)
+                if (result.autonomousState != before) pendingAutonomousAction =
+                    if (result.autonomousState == AutonomousState.STARTING) PendingAutonomousAction.START
+                    else PendingAutonomousAction.STOP
+            } else when (operatorSnapshot.autonomousState) {
+                AutonomousState.STOPPED, AutonomousState.FAULT -> confirmStartAutonomous()
+                AutonomousState.READY -> requestAutonomousProcess(PendingAutonomousAction.STOP)
+                AutonomousState.STARTING -> setStatus("AUTONOMOUS startup is already in progress")
+            }
         }
         autonomousArmButton.setOnClickListener {
             val result = operatorControl.toggleAutonomousArm()
@@ -666,8 +677,84 @@ class MainActivity : AppCompatActivity() {
     private fun selectOperatorRoute(route: ConnectionRoute) {
         val before = operatorControl.snapshot().route
         val result = operatorControl.selectRoute(route)
+        if (result.route != before) sendRouteCommand(before, route)
         renderOperatorState(result)
-        if (result.route != before) sendProductionCommand("connection_route", JSONObject().put("route", route.name))
+    }
+
+    private fun sendRouteCommand(previousRoute: ConnectionRoute, route: ConnectionRoute) {
+        if (BuildConfig.CONTROL_SIMULATOR) return
+        val packet = ControlProtocol.command(
+            ++commandSequence,
+            "connection_route",
+            JSONObject().put("route", route.name)
+        )
+        val previousHost = if (previousRoute == ConnectionRoute.LOCAL) localJetsonHost()
+        else preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
+        if (previousHost.isNotBlank()) udpSender.sendTo(previousHost, DEFAULT_UDP_PORT, packet)
+
+        // Returning to LOCAL must remain recoverable even when the selected
+        // INTERNET/Tailscale path is currently unavailable.
+        if (route == ConnectionRoute.LOCAL && previousHost != localJetsonHost()) {
+            udpSender.sendTo(localJetsonHost(), DEFAULT_UDP_PORT, packet)
+        }
+    }
+
+    private fun confirmStartAutonomous() {
+        AlertDialog.Builder(this)
+            .setTitle("Start AUTONOMOUS?")
+            .setMessage(
+                "This starts Nav2 and Collision Monitor. It does not arm motion. " +
+                    "Movement still requires CH05 down and a separate AUTONOMOUS ARMED action."
+            )
+            .setPositiveButton("Start") { _, _ -> requestAutonomousProcess(PendingAutonomousAction.START) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun requestAutonomousProcess(action: PendingAutonomousAction) {
+        pendingAutonomousAction = action
+        sendProductionCommand(
+            "autonomous_process",
+            JSONObject().put("action", if (action == PendingAutonomousAction.START) "start" else "stop")
+        )
+        setStatus(if (action == PendingAutonomousAction.START) "Starting AUTONOMOUS; waiting for READY"
+            else "Stopping AUTONOMOUS; waiting for full shutdown")
+    }
+
+    private fun handleAutonomousCompletion(snapshot: OperatorSnapshot) {
+        when (pendingAutonomousAction) {
+            PendingAutonomousAction.START -> when (snapshot.autonomousState) {
+                AutonomousState.READY -> {
+                    pendingAutonomousAction = null
+                    AlertDialog.Builder(this)
+                        .setTitle("AUTONOMOUS started")
+                        .setMessage(
+                            "Nav2 and Collision Monitor are READY. Motion remains disabled until " +
+                                "CH05 is down and AUTONOMOUS is explicitly armed."
+                        )
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+                AutonomousState.FAULT -> {
+                    pendingAutonomousAction = null
+                    AlertDialog.Builder(this).setTitle("AUTONOMOUS start failed")
+                        .setMessage(snapshot.message).setPositiveButton("OK", null).show()
+                }
+                else -> Unit
+            }
+            PendingAutonomousAction.STOP -> if (snapshot.autonomousState == AutonomousState.STOPPED) {
+                pendingAutonomousAction = null
+                AlertDialog.Builder(this)
+                    .setTitle("AUTONOMOUS stopped")
+                    .setMessage(
+                        "Nav2 and Collision Monitor have stopped fully. Livox, FAST-LIO, speed, " +
+                            "roll and pitch telemetry remain active."
+                    )
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+            null -> Unit
+        }
     }
 
     private fun sendProductionCommand(type: String, payload: JSONObject = JSONObject()) {
@@ -859,14 +946,16 @@ class MainActivity : AppCompatActivity() {
         val speed = displaySpeed?.let { "%.2f m/s".format(it) } ?: "—"
         telemetry.text = "SPEED $speed   ROLL ${ControlProtocol.direction(displayRoll, "LEFT", "RIGHT")}   " +
             "PITCH ${ControlProtocol.direction(displayPitch, "BACKWARD", "FORWARD")}"
-        val totalTurns = snapshot.queuedTurns + if (snapshot.activeTurn != null) 1 else 0
-        turnQueue.text = "TURN $totalTurns / 6"
+        turnQueue.text = "TURN PENDING ${snapshot.totalTurns} / 6"
 
         udpTargetButton.text = snapshot.route.name
         udpTargetButton.isEnabled = snapshot.ch05 == Ch05Position.UP_MANUAL
         internetArmButton.visibility = if (snapshot.ch05 == Ch05Position.UP_MANUAL && snapshot.route == ConnectionRoute.INTERNET) View.VISIBLE else View.GONE
         internetArmButton.text = if (snapshot.internetArmed) "INTERNET ARMED" else "INTERNET SAFE"
-        autonomousProcessButton.isEnabled = snapshot.ch05 == Ch05Position.MIDDLE_SAFE || snapshot.ch05 == Ch05Position.DOWN_AUTONOMOUS
+        autonomousProcessButton.visibility = if (
+            snapshot.ch05 == Ch05Position.MIDDLE_SAFE || snapshot.ch05 == Ch05Position.DOWN_AUTONOMOUS
+        ) View.VISIBLE else View.GONE
+        autonomousProcessButton.isEnabled = snapshot.autonomousState != AutonomousState.STARTING
         autonomousProcessButton.text = when (snapshot.autonomousState) {
             AutonomousState.STOPPED, AutonomousState.FAULT -> "START AUTONOMOUS"
             AutonomousState.STARTING -> "STARTING…"

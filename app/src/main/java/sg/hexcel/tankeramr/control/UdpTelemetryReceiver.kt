@@ -18,6 +18,7 @@ data class TelemetryPacket(
     val autonomousState: AutonomousState,
     val autonomousArmed: Boolean,
     val queuedTurns: Int,
+    val totalTurns: Int,
     val activeTurn: TurnButton?,
     val message: String
 )
@@ -60,6 +61,7 @@ class UdpTelemetryReceiver(private val port: Int = 5006) {
                                 }.getOrDefault(AutonomousState.FAULT),
                                 autonomousArmed = payload.optBoolean("autonomous_armed", false),
                                 queuedTurns = payload.optInt("queued_turns", 0),
+                                totalTurns = payload.optInt("total_turns", payload.optInt("queued_turns", 0)),
                                 activeTurn = TurnButton.values().firstOrNull {
                                     it.wireName == payload.optString("active_turn")
                                 },
