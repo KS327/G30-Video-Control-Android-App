@@ -1,12 +1,38 @@
-# TankerAMR G30 Video Control Final
+# TankerAMR G30 Operator App
 
-Final Android app for Skydroid G30:
+Android operator app for Skydroid G30:
 
 - Scans the 192.168.144.x camera subnet.
-- Displays four JINGYANG/XM RTSP camera streams.
-- Uses UDP only for L1/L2/R1/R2 TankerAMR turn activation commands.
-- Default UDP target: 192.168.144.20:5005.
-- Bottom button order: L2, L1, UDP target, R1, R2.
+- Displays up to six RTSP cameras with focus, 2×2 and 3×2 views.
+- Uses the C12 visible stream on port 554 and thermal stream on port 555.
+- Shows speed, roll and pitch telemetry received from Jetson.
+- Provides CH05-gated LOCAL/INTERNET manual routing and LOCAL-only AUTONOMOUS controls.
+- Shows the authoritative number of pending 90-degree turns and queues at most six, including the active turn.
+
+## Safety and control model
+
+- CH05 up: manual control. LOCAL is the default; INTERNET requires arming.
+- CH05 middle: hard-safe state. Arms and queued turns are cleared; LOCAL is restored after 0.5 seconds.
+- CH05 down: AUTONOMOUS only. Leaving down always disarms it, but a READY process remains running.
+- `START AUTONOMOUS` is hidden while CH05 is up, requires confirmation, and changes to `STOP AUTONOMOUS` only after Jetson reports READY.
+- Start/stop completion dialogs use authoritative Jetson state. Stopping Nav2 and Collision Monitor leaves Livox, FAST-LIO, speed and tilt telemetry active.
+- LOCAL/INTERNET route changes are sent through the currently reachable route; returning to LOCAL also sends a recovery copy to the configured LAN address.
+- LOCAL Jetson command endpoint: `192.168.144.20:5005`.
+- Jetson telemetry listener: UDP port `5006`.
+- INTERNET address is explicitly configured by the operator; the app never guesses a Tailscale IP.
+
+Commands and telemetry use versioned JSON (`v: 1`). Telemetry payload fields are `speed_mps`,
+`roll_deg`, `pitch_deg`, and `source`. Telemetry becomes stale after 1.5 seconds and the UI displays `—`.
+
+## Debug simulator
+
+Debug APKs never send Tanker movement commands. Tap the amber control-state label and select simulated
+CH05 up, middle, or down to test the complete G30 workflow without a powered TankerAMR. The screen is
+clearly marked `SIMULATOR` / `SIM CH05 OVERRIDE`. Commissioning and release builds trust authoritative
+Jetson SBUS telemetry for CH05; RCSDK channels are sent only for armed INTERNET manual control.
+
+The connected G30 reports CH05 unreliably through RCSDK. Jetson SBUS is the safety authority:
+282=AUTONOMOUS/down, 1002=disabled/middle, and 1722=manual/up.
 
 ## Required AAR files
 
@@ -19,41 +45,39 @@ Copy these proprietary Skydroid AAR files into `app/libs/` before building:
 
 ## Default camera URLs
 
-The app default manual URLs use the confirmed JINGYANG/XM pattern with stream=1:
+The four installed IP cameras use their verified HEVC 1920x1080 @ 25 fps main stream:
 
-`rtsp://admin:@<IP>:554/user=admin&password=&channel=1&stream=1.sdp`
+`rtsp://admin:@<IP>:554/user=admin&password=&channel=1&stream=0.sdp`
 
-Default order:
+Default camera order:
 
-1. 192.168.144.100
-2. 192.168.144.110
-3. 192.168.144.130
-4. 192.168.144.120
+1. FRONT C12 (`192.168.144.108`)
+2. CAMERA 2 (`192.168.144.100`)
+3. CAMERA 3 (`192.168.144.110`)
+4. CAMERA 4 (`192.168.144.130`)
+5. CAMERA 5 (`192.168.144.120`)
+6. CAMERA 6 (reserved)
 
-Use stream=0 if maximum quality is required and the G30 can decode all four streams stably.
+C12 starts on visible video after every fresh app launch. The CAMERAS editor provides
+`RESTORE VERIFIED` to recover the unique 1080p camera mapping.
 
-## Jetson secondary IP service
+## Camera resilience
 
-Files are included under `jetson/`:
+- RTSP uses TCP to keep HEVC video stable across the receiver and Ethernet switch.
+- A stream that cannot connect within 10 seconds is stopped so it cannot consume resources needed by the other cameras or UDP controls.
+- If the C12 visible stream is unavailable, the app attempts the thermal stream once and informs the operator. Thermal uses software decoding for compatibility with the G30.
+- Stream replacement ignores delayed disconnect callbacks from the previous player, preventing a successful visible/thermal switch from being marked offline.
 
-- `add_tankeramr_camera_ip.sh`
-- `tankeramr-camera-ip.service`
+## Jetson network and runtime
 
-Install on Jetson:
-
-```bash
-sudo cp jetson/add_tankeramr_camera_ip.sh /usr/local/sbin/add_tankeramr_camera_ip.sh
-sudo chmod +x /usr/local/sbin/add_tankeramr_camera_ip.sh
-sudo cp jetson/tankeramr-camera-ip.service /etc/systemd/system/tankeramr-camera-ip.service
-sudo systemctl daemon-reload
-sudo systemctl enable tankeramr-camera-ip.service
-sudo systemctl start tankeramr-camera-ip.service
-ip -4 addr show dev enP8p1s0
-```
-
-Expected Ethernet addresses after boot:
+Expected Ethernet addresses:
 
 - `192.168.1.50/24` for LiDAR
 - `192.168.144.20/24` for cameras and G30 UDP control
 
 No gateway is added for 192.168.144.20.
+
+The deployed runtime is organized under `/home/jetson/KinSen`, with settings in
+`config/settings.json`, runtime state in `run/`, logs in `logs/`, and timestamped rollback copies in
+`backups/`. Livox, FAST-LIO and scan conversion are always-on telemetry services. Nav2 and Collision
+Monitor are separately managed by START/STOP AUTONOMOUS.

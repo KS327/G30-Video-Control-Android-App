@@ -26,26 +26,36 @@ class CameraScanner {
     companion object {
         /**
          * Confirmed JINGYANG / XM 1080P camera RTSP pattern for username admin and empty password.
-         * stream=1 is used by default for four-camera display because it normally gives lower decode load,
-         * lower latency, and fewer gray/distorted frames than the 1080P main stream.
-         * Change DEFAULT_STREAM to 0 if maximum image quality is more important than four-grid stability.
+         * All four installed cameras were verified as HEVC 1920x1080 @ 25 fps on stream=0.
+         * Their stream=1 profiles are inconsistent (352x288 or 704x576) and caused distorted
+         * rendering on the G30, so the verified main stream is the production default.
          */
-        private const val DEFAULT_STREAM = 1
+        private const val DEFAULT_STREAM = 0
 
         const val C12_IP = "192.168.144.108"
         const val C12_VISIBLE_URL = "rtsp://$C12_IP:554/stream=1"
         const val C12_THERMAL_URL = "rtsp://$C12_IP:555/stream=2"
+        val VERIFIED_IP_CAMERA_IPS = listOf(
+            "192.168.144.100",
+            "192.168.144.110",
+            "192.168.144.130",
+            "192.168.144.120"
+        )
 
         fun buildXmEyeRtspUrl(ip: String, stream: Int = DEFAULT_STREAM): String {
             return "rtsp://admin:@$ip:554/user=admin&password=&channel=1&stream=$stream.sdp"
         }
 
+        fun preferMainStream(url: String): String {
+            val trimmed = url.trim()
+            if (!trimmed.startsWith("rtsp://admin:@") ||
+                !trimmed.contains(":554/user=admin&password=&channel=1&stream=1.sdp")) return trimmed
+            return trimmed.replace("&stream=1.sdp", "&stream=0.sdp")
+        }
+
         fun defaultSixCameraUrls(): List<String> = listOf(
             C12_VISIBLE_URL,
-            buildXmEyeRtspUrl("192.168.144.100"),
-            buildXmEyeRtspUrl("192.168.144.110"),
-            buildXmEyeRtspUrl("192.168.144.130"),
-            buildXmEyeRtspUrl("192.168.144.120"),
+            *VERIFIED_IP_CAMERA_IPS.map(::buildXmEyeRtspUrl).toTypedArray(),
             ""
         )
     }

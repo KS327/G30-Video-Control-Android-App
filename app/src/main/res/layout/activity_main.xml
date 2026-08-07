@@ -64,6 +64,76 @@
             android:text="VIDEO STOP" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/operatorBar"
+        android:layout_width="0dp"
+        android:layout_height="54dp"
+        android:background="@color/industrial_surface_raised"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/topBar">
+
+        <TextView
+            android:id="@+id/tvControlState"
+            android:layout_width="150dp"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:text="CH05 UNKNOWN\nSIMULATOR"
+            android:textColor="@color/industrial_warning"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvTelemetry"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:singleLine="true"
+            android:text="SPEED —   ROLL —   PITCH —"
+            android:textColor="@color/industrial_text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvTurnQueue"
+            android:layout_width="96dp"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="TURN 0 / 6"
+            android:textColor="@color/industrial_text_secondary"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnInternetArm"
+            style="@style/IndustrialDangerButton"
+            android:layout_width="112dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="6dp"
+            android:text="INTERNET SAFE" />
+
+        <Button
+            android:id="@+id/btnAutonomousProcess"
+            style="@style/IndustrialButton"
+            android:layout_width="132dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="6dp"
+            android:text="START AUTONOMOUS" />
+
+        <Button
+            android:id="@+id/btnAutonomousArm"
+            style="@style/IndustrialDangerButton"
+            android:layout_width="132dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="6dp"
+            android:text="AUTONOMOUS SAFE" />
+    </LinearLayout>
+
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/cameraWall"
         android:layout_width="0dp"
@@ -72,7 +142,7 @@
         app:layout_constraintBottom_toTopOf="@id/controlBar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/topBar">
+        app:layout_constraintTop_toBottomOf="@id/operatorBar">
 
         <androidx.constraintlayout.widget.Guideline
             android:id="@+id/guideVOneThird"

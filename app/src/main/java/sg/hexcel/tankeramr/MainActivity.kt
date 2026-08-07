@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -24,20 +25,29 @@ import com.skydroid.rcsdk.KeyManager
 import com.skydroid.rcsdk.RCSDKManager
 import com.skydroid.rcsdk.SDKManagerCallBack
 import com.skydroid.rcsdk.common.DeviceType
+import com.skydroid.rcsdk.common.remotecontroller.ChannelSettings
 import com.skydroid.rcsdk.common.callback.CompletionCallbackWith
 import com.skydroid.rcsdk.common.callback.KeyListener
 import com.skydroid.rcsdk.common.error.SkyException
 import com.skydroid.rcsdk.key.RemoteControllerKey
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import sg.hexcel.tankeramr.control.TurnButton
-import sg.hexcel.tankeramr.control.TurnPacket
+import sg.hexcel.tankeramr.control.AutonomousState
+import sg.hexcel.tankeramr.control.Ch05Position
+import sg.hexcel.tankeramr.control.ConnectionRoute
+import sg.hexcel.tankeramr.control.ControlProtocol
+import sg.hexcel.tankeramr.control.OperatorControl
+import sg.hexcel.tankeramr.control.OperatorSnapshot
 import sg.hexcel.tankeramr.control.UdpCommandSender
+import sg.hexcel.tankeramr.control.UdpTelemetryReceiver
 import sg.hexcel.tankeramr.network.CameraScanner
 import sg.hexcel.tankeramr.video.VideoGridController
 
 class MainActivity : AppCompatActivity() {
     private enum class ViewMode { FOCUS, FOUR, SIX, FULLSCREEN }
     private enum class C12Mode { VISIBLE, THERMAL }
+    private enum class PendingAutonomousAction { START, STOP }
 
     private lateinit var status: TextView
     private lateinit var cameraWall: ConstraintLayout
@@ -47,6 +57,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var c12ModeButton: Button
     private lateinit var videoButton: Button
     private lateinit var udpTargetButton: Button
+    private lateinit var controlState: TextView
+    private lateinit var telemetry: TextView
+    private lateinit var turnQueue: TextView
+    private lateinit var internetArmButton: Button
+    private lateinit var autonomousProcessButton: Button
+    private lateinit var autonomousArmButton: Button
     private lateinit var speedBubbles: List<TextView>
     private lateinit var videoGrid: VideoGridController
     private lateinit var preferences: SharedPreferences
@@ -58,12 +74,31 @@ class MainActivity : AppCompatActivity() {
     private var videoStoppedByOperator = false
 
     private val udpSender = UdpCommandSender(host = DEFAULT_JETSON_IP, port = DEFAULT_UDP_PORT)
+    private val telemetryReceiver = UdpTelemetryReceiver(TELEMETRY_UDP_PORT)
+    private val operatorControl = OperatorControl()
+    private var operatorSnapshot = OperatorSnapshot()
+    private var lastActiveTurn: TurnButton? = null
+    private var commandSequence = 0L
+    private var debugCh05Override: Int? = null
+    private var pendingAutonomousAction: PendingAutonomousAction? = null
+    private var c12FallbackAttempted = false
+    private var c12OfflineNotified = false
+
+    private val operatorTickRunnable = object : Runnable {
+        override fun run() {
+            val snapshot = operatorControl.tick()
+            renderOperatorState(snapshot)
+            if (BuildConfig.CONTROL_SIMULATOR) handleAutonomousCompletion(snapshot)
+            rcPollHandler.postDelayed(this, OPERATOR_TICK_MS)
+        }
+    }
 
     private val rcPollHandler = Handler(Looper.getMainLooper())
     private var rcPollingEnabled = false
     private var rcConnected = false
     private var lastSpeedLevel = -1
     private var lastRcFailureLogTimeMs = 0L
+    private var lastRcChannelsLogTimeMs = 0L
 
     private val h16ChannelsListener: KeyListener<IntArray> = KeyListener { _, newValue ->
         updateSpeedFromChannels(newValue)
@@ -82,12 +117,19 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         preferences = getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+        udpSender.setTarget(localJetsonHost(), DEFAULT_UDP_PORT)
         status = findViewById(R.id.tvStatus)
         cameraWall = findViewById(R.id.cameraWall)
         viewModeButton = findViewById(R.id.btnViewMode)
         c12ModeButton = findViewById(R.id.btnC12Mode)
         videoButton = findViewById(R.id.btnStopVideo)
         udpTargetButton = findViewById(R.id.btnUdpTarget)
+        controlState = findViewById(R.id.tvControlState)
+        telemetry = findViewById(R.id.tvTelemetry)
+        turnQueue = findViewById(R.id.tvTurnQueue)
+        internetArmButton = findViewById(R.id.btnInternetArm)
+        autonomousProcessButton = findViewById(R.id.btnAutonomousProcess)
+        autonomousArmButton = findViewById(R.id.btnAutonomousArm)
 
         cameraFrames = listOf(
             findViewById(R.id.frameCam0), findViewById(R.id.frameCam1),
@@ -112,7 +154,10 @@ class MainActivity : AppCompatActivity() {
                 findViewById(R.id.tvCam4), findViewById(R.id.tvCam5)
             ),
             names = CAMERA_NAMES,
-            onStateChanged = { _, _ -> refreshStatusSummary() }
+            onStateChanged = { slot, state ->
+                if (slot == 0) handleC12StreamState(state)
+                refreshStatusSummary()
+            }
         )
 
         speedBubbles = listOf(
@@ -129,6 +174,8 @@ class MainActivity : AppCompatActivity() {
         bindVideoButtons()
         bindCameraGestures()
         bindUdpTargetButton()
+        bindOperatorControls()
+        bindDebugSimulatorControls()
         bindBackNavigation()
 
         bindTurnButton(findViewById(R.id.btnL2), TurnButton.L2_LEFT_ACW)
@@ -137,6 +184,15 @@ class MainActivity : AppCompatActivity() {
         bindTurnButton(findViewById(R.id.btnR2), TurnButton.R2_RIGHT_CW)
 
         udpSender.start(this) { setStatus(it) }
+        telemetryReceiver.start(
+            onTelemetry = { packet -> runOnUiThread {
+                val snapshot = operatorControl.updateRemote(packet)
+                renderOperatorState(snapshot)
+                handleAutonomousCompletion(snapshot)
+            } },
+            onError = { setStatus(it) }
+        )
+        rcPollHandler.post(operatorTickRunnable)
         updateC12Button()
         applyViewMode(currentViewMode)
         initRcSdkForSpeedDisplay()
@@ -150,9 +206,35 @@ class MainActivity : AppCompatActivity() {
             ?.takeUnless { it == ViewMode.FULLSCREEN }
             ?: ViewMode.FOCUS
         previousViewMode = currentViewMode
-        c12Mode = preferences.getString(PREF_C12_MODE, C12Mode.VISIBLE.name)
-            ?.let { runCatching { C12Mode.valueOf(it) }.getOrNull() }
-            ?: C12Mode.VISIBLE
+        // Deterministic operator startup: always begin with the visible C12 feed.
+        // THERMAL remains available as a session toggle but is never restored after relaunch.
+        c12Mode = C12Mode.VISIBLE
+        migrateCameraConfiguration()
+    }
+
+    private fun migrateCameraConfiguration() {
+        if (preferences.getInt(PREF_CAMERA_SCHEMA, 0) >= CAMERA_SCHEMA_VERSION) return
+        val defaults = CameraScanner.defaultSixCameraUrls()
+        val existing = (1..4).map { preferences.getString(cameraUrlKey(it), null)?.trim().orEmpty() }
+        val knownAssignments = existing.map { url ->
+            CameraScanner.VERIFIED_IP_CAMERA_IPS.firstOrNull { ip -> url.contains(ip) }
+        }
+        val onlyKnownOrBlank = existing.zip(knownAssignments).all { (url, ip) -> url.isBlank() || ip != null }
+        val knownLayoutIsInvalid = knownAssignments.any { it == null } ||
+            knownAssignments.filterNotNull().distinct().size != CameraScanner.VERIFIED_IP_CAMERA_IPS.size
+        preferences.edit().apply {
+            // Repair duplicate/missing assignments only when all saved entries belong to
+            // the known TankerAMR camera set. Unrelated custom RTSP URLs are preserved.
+            for (slot in 1..4) {
+                val key = cameraUrlKey(slot)
+                val current = existing[slot - 1]
+                val migrated = if (onlyKnownOrBlank && knownLayoutIsInvalid) defaults[slot]
+                else if (current.isBlank()) defaults[slot]
+                else CameraScanner.preferMainStream(current)
+                putString(key, migrated)
+            }
+            putInt(PREF_CAMERA_SCHEMA, CAMERA_SCHEMA_VERSION)
+        }.apply()
     }
 
     private fun loadCameraUrls(): List<String> {
@@ -192,7 +274,8 @@ class MainActivity : AppCompatActivity() {
     private fun bindVideoButtons() {
         c12ModeButton.setOnClickListener {
             c12Mode = if (c12Mode == C12Mode.VISIBLE) C12Mode.THERMAL else C12Mode.VISIBLE
-            preferences.edit().putString(PREF_C12_MODE, c12Mode.name).apply()
+            c12FallbackAttempted = c12Mode == C12Mode.THERMAL
+            c12OfflineNotified = false
             updateC12Button()
             val shouldPlay = !videoStoppedByOperator && 0 in visibleSlots(currentViewMode)
             videoGrid.setUrl(0, c12Url(), playNow = shouldPlay)
@@ -240,8 +323,18 @@ class MainActivity : AppCompatActivity() {
                 if (!videoStoppedByOperator) videoGrid.playVisible(visibleSlots(currentViewMode))
                 setStatus("Saved ${urls.count { it.isNotBlank() }} configured camera endpoints")
             }
+            .setNeutralButton("Restore verified") { _, _ -> restoreVerifiedCameraLayout() }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun restoreVerifiedCameraLayout() {
+        val urls = CameraScanner.defaultSixCameraUrls().toMutableList().also { it[0] = c12Url() }
+        saveCameraUrls(urls)
+        preferences.edit().putInt(PREF_CAMERA_SCHEMA, CAMERA_SCHEMA_VERSION).apply()
+        videoGrid.setUrls(urls)
+        if (!videoStoppedByOperator) videoGrid.playVisible(visibleSlots(currentViewMode))
+        setStatus("Restored C12 and four verified 1080p IP cameras")
     }
 
     private fun bindCameraGestures() {
@@ -440,32 +533,259 @@ class MainActivity : AppCompatActivity() {
         c12ModeButton.text = c12Mode.name
     }
 
+    private fun handleC12StreamState(state: VideoGridController.StreamState) {
+        if (state == VideoGridController.StreamState.LIVE) {
+            c12OfflineNotified = false
+            return
+        }
+        if (state != VideoGridController.StreamState.OFFLINE || videoStoppedByOperator) return
+
+        if (c12Mode == C12Mode.VISIBLE && !c12FallbackAttempted) {
+            c12FallbackAttempted = true
+            c12Mode = C12Mode.THERMAL
+            updateC12Button()
+            videoGrid.setUrl(0, c12Url(), playNow = 0 in visibleSlots(currentViewMode))
+            Toast.makeText(this, "C12 visible unavailable; trying thermal", Toast.LENGTH_LONG).show()
+        } else if (!c12OfflineNotified) {
+            c12OfflineNotified = true
+            Toast.makeText(this, "C12 unavailable; check or restart the C12 camera", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun bindUdpTargetButton() {
         udpTargetButton.setOnClickListener {
-            val ipInput = EditText(this).apply {
-                hint = "Jetson IP"
-                setSingleLine(true)
-                setText(udpSender.hostText())
-                inputType = InputType.TYPE_CLASS_TEXT
-                setSelectAllOnFocus(true)
-            }
             AlertDialog.Builder(this)
-                .setTitle("LOCAL Jetson endpoint")
-                .setMessage("Commands use UDP port $DEFAULT_UDP_PORT.")
-                .setView(ipInput)
-                .setPositiveButton("Save") { _, _ ->
-                    val host = ipInput.text.toString().trim()
-                    if (host.isBlank()) {
-                        setStatus("Jetson endpoint unchanged: empty address")
-                    } else {
-                        udpSender.setTarget(host, DEFAULT_UDP_PORT)
-                        udpSender.start(this) { setStatus(it) }
-                        setStatus("LOCAL endpoint set to ${udpSender.targetText()}")
+                .setTitle("Manual connection route")
+                .setItems(arrayOf(
+                    "LOCAL · ${localJetsonHost()}",
+                    "INTERNET · Tailscale VPN",
+                    "Configure LOCAL address",
+                    "Configure INTERNET address",
+                    "Test current connection",
+                    "Safety: route changes require CH05 up"
+                )) { _, which ->
+                    when (which) {
+                        0 -> selectOperatorRoute(ConnectionRoute.LOCAL)
+                        1 -> {
+                            val host = preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
+                            if (host.isBlank()) showInternetEndpointEditor()
+                            else selectOperatorRoute(ConnectionRoute.INTERNET)
+                        }
+                        2 -> showLocalEndpointEditor()
+                        3 -> showInternetEndpointEditor()
+                        4 -> sendProductionCommand("ping")
+                        else -> setStatus("Route change applies a 0.5 s neutral interlock")
                     }
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+    }
+
+    private fun localJetsonHost(): String =
+        preferences.getString(PREF_LOCAL_HOST, DEFAULT_JETSON_IP)?.trim().orEmpty()
+            .ifBlank { DEFAULT_JETSON_IP }
+
+    private fun showLocalEndpointEditor() {
+        val input = EditText(this).apply {
+            hint = "Jetson Ethernet IP"
+            setSingleLine(true)
+            setText(localJetsonHost())
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSelectAllOnFocus(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("LOCAL Jetson endpoint")
+            .setMessage("Default: $DEFAULT_JETSON_IP. Commands use UDP port $DEFAULT_UDP_PORT.")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val host = input.text.toString().trim()
+                if (host.isBlank()) setStatus("LOCAL endpoint unchanged: address is empty")
+                else {
+                    preferences.edit().putString(PREF_LOCAL_HOST, host).apply()
+                    if (operatorSnapshot.route == ConnectionRoute.LOCAL) udpSender.setTarget(host, DEFAULT_UDP_PORT)
+                    setStatus("LOCAL endpoint saved: $host:$DEFAULT_UDP_PORT")
+                }
+            }
+            .setNeutralButton("Restore default") { _, _ ->
+                preferences.edit().putString(PREF_LOCAL_HOST, DEFAULT_JETSON_IP).apply()
+                udpSender.setTarget(DEFAULT_JETSON_IP, DEFAULT_UDP_PORT)
+                setStatus("LOCAL endpoint restored: $DEFAULT_JETSON_IP:$DEFAULT_UDP_PORT")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showInternetEndpointEditor() {
+        val input = EditText(this).apply {
+            hint = "Jetson Tailscale IP (for example 100.x.x.x)"
+            setSingleLine(true)
+            setText(preferences.getString(PREF_INTERNET_HOST, ""))
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSelectAllOnFocus(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("INTERNET Jetson endpoint")
+            .setMessage("Enter the Jetson's exact Tailscale IP. It is intentionally not guessed.")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val host = input.text.toString().trim()
+                if (host.isBlank()) setStatus("INTERNET endpoint not saved: address is empty")
+                else {
+                    preferences.edit().putString(PREF_INTERNET_HOST, host).apply()
+                    setStatus("INTERNET endpoint saved: $host:$DEFAULT_UDP_PORT")
+                    selectOperatorRoute(ConnectionRoute.INTERNET)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun bindOperatorControls() {
+        internetArmButton.setOnClickListener {
+            val result = operatorControl.toggleInternetArm()
+            renderOperatorState(result)
+            if (result.message == "INTERNET ARMED" || result.message == "INTERNET DISARMED") {
+                sendProductionCommand("internet_arm", JSONObject().put("armed", result.internetArmed))
+            }
+        }
+        autonomousProcessButton.setOnClickListener {
+            if (BuildConfig.CONTROL_SIMULATOR) {
+                val before = operatorControl.snapshot().autonomousState
+                val result = operatorControl.toggleAutonomousProcess()
+                renderOperatorState(result)
+                if (result.autonomousState != before) pendingAutonomousAction =
+                    if (result.autonomousState == AutonomousState.STARTING) PendingAutonomousAction.START
+                    else PendingAutonomousAction.STOP
+            } else when (operatorSnapshot.autonomousState) {
+                AutonomousState.STOPPED, AutonomousState.FAULT -> confirmStartAutonomous()
+                AutonomousState.READY -> requestAutonomousProcess(PendingAutonomousAction.STOP)
+                AutonomousState.STARTING -> setStatus("AUTONOMOUS startup is already in progress")
+            }
+        }
+        autonomousArmButton.setOnClickListener {
+            val result = operatorControl.toggleAutonomousArm()
+            renderOperatorState(result)
+            if (result.message == "AUTONOMOUS ARMED" || result.message == "AUTONOMOUS DISARMED") {
+                sendProductionCommand("autonomous_arm", JSONObject().put("armed", result.autonomousArmed))
+            }
+        }
+    }
+
+    private fun bindDebugSimulatorControls() {
+        if (!BuildConfig.CONTROL_SIMULATOR) return
+        controlState.setOnClickListener {
+            val choices = arrayOf(
+                "UP · MANUAL",
+                "MIDDLE · SAFE",
+                "DOWN · AUTONOMOUS",
+                "USE PHYSICAL RCSDK VALUE"
+            )
+            AlertDialog.Builder(this)
+                .setTitle("SIM CH05 · no Tanker commands")
+                .setItems(choices) { _, which ->
+                    debugCh05Override = when (which) {
+                        0 -> CH_MAX
+                        1 -> (CH_MIN + CH_MAX) / 2
+                        2 -> CH_MIN
+                        else -> null
+                    }
+                    debugCh05Override?.let { simulated ->
+                        val channels = IntArray(16) { (CH_MIN + CH_MAX) / 2 }.also { it[4] = simulated }
+                        renderOperatorState(operatorControl.updateChannels(channels))
+                    }
+                    setStatus(if (debugCh05Override == null) "Using physical RCSDK CH05" else "SIM CH05 override active")
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun selectOperatorRoute(route: ConnectionRoute) {
+        val before = operatorControl.snapshot().route
+        val result = operatorControl.selectRoute(route)
+        if (result.route != before) sendRouteCommand(before, route)
+        renderOperatorState(result)
+    }
+
+    private fun sendRouteCommand(previousRoute: ConnectionRoute, route: ConnectionRoute) {
+        if (BuildConfig.CONTROL_SIMULATOR) return
+        val packet = ControlProtocol.command(
+            ++commandSequence,
+            "connection_route",
+            JSONObject().put("route", route.name)
+        )
+        val previousHost = if (previousRoute == ConnectionRoute.LOCAL) localJetsonHost()
+        else preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
+        if (previousHost.isNotBlank()) udpSender.sendTo(previousHost, DEFAULT_UDP_PORT, packet)
+
+        // Returning to LOCAL must remain recoverable even when the selected
+        // INTERNET/Tailscale path is currently unavailable.
+        if (route == ConnectionRoute.LOCAL && previousHost != localJetsonHost()) {
+            udpSender.sendTo(localJetsonHost(), DEFAULT_UDP_PORT, packet)
+        }
+    }
+
+    private fun confirmStartAutonomous() {
+        AlertDialog.Builder(this)
+            .setTitle("Start AUTONOMOUS?")
+            .setMessage(
+                "This starts Nav2 and Collision Monitor. It does not arm motion. " +
+                    "Movement still requires CH05 down and a separate AUTONOMOUS ARMED action."
+            )
+            .setPositiveButton("Start") { _, _ -> requestAutonomousProcess(PendingAutonomousAction.START) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun requestAutonomousProcess(action: PendingAutonomousAction) {
+        pendingAutonomousAction = action
+        sendProductionCommand(
+            "autonomous_process",
+            JSONObject().put("action", if (action == PendingAutonomousAction.START) "start" else "stop")
+        )
+        setStatus(if (action == PendingAutonomousAction.START) "Starting AUTONOMOUS; waiting for READY"
+            else "Stopping AUTONOMOUS; waiting for full shutdown")
+    }
+
+    private fun handleAutonomousCompletion(snapshot: OperatorSnapshot) {
+        when (pendingAutonomousAction) {
+            PendingAutonomousAction.START -> when (snapshot.autonomousState) {
+                AutonomousState.READY -> {
+                    pendingAutonomousAction = null
+                    AlertDialog.Builder(this)
+                        .setTitle("AUTONOMOUS started")
+                        .setMessage(
+                            "Nav2 and Collision Monitor are READY. Motion remains disabled until " +
+                                "CH05 is down and AUTONOMOUS is explicitly armed."
+                        )
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+                AutonomousState.FAULT -> {
+                    pendingAutonomousAction = null
+                    AlertDialog.Builder(this).setTitle("AUTONOMOUS start failed")
+                        .setMessage(snapshot.message).setPositiveButton("OK", null).show()
+                }
+                else -> Unit
+            }
+            PendingAutonomousAction.STOP -> if (snapshot.autonomousState == AutonomousState.STOPPED) {
+                pendingAutonomousAction = null
+                AlertDialog.Builder(this)
+                    .setTitle("AUTONOMOUS stopped")
+                    .setMessage(
+                        "Nav2 and Collision Monitor have stopped fully. Livox, FAST-LIO, speed, " +
+                            "roll and pitch telemetry remain active."
+                    )
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+            null -> Unit
+        }
+    }
+
+    private fun sendProductionCommand(type: String, payload: JSONObject = JSONObject()) {
+        if (!BuildConfig.CONTROL_SIMULATOR) udpSender.send(ControlProtocol.command(++commandSequence, type, payload))
     }
 
     private fun scanAndChooseCamera(onCameraChosen: (CameraScanner.HostCandidate) -> Unit) {
@@ -505,18 +825,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindTurnButton(button: Button, turnButton: TurnButton) {
-        button.setOnTouchListener { _: View, event: MotionEvent ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    udpSender.send(TurnPacket.down(turnButton))
-                    setStatus("${turnButton.shortName} DOWN -> ${udpSender.targetText()}")
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    udpSender.send(TurnPacket.up(turnButton))
-                    true
-                }
-                else -> true
+        button.setOnClickListener {
+            if (BuildConfig.CONTROL_SIMULATOR) {
+                renderOperatorState(operatorControl.enqueueTurn(turnButton))
+            } else {
+                udpSender.send(ControlProtocol.turn(++commandSequence, turnButton))
+                setStatus("${turnButton.shortName} turn request sent")
             }
         }
     }
@@ -527,6 +841,7 @@ class MainActivity : AppCompatActivity() {
             RCSDKManager.initSDK(this, object : SDKManagerCallBack {
                 override fun onRcConnected() {
                     rcConnected = true
+                    logRcChannelSettings()
                     startSpeedChannelPolling()
                     refreshStatusSummary()
                 }
@@ -566,6 +881,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun logRcChannelSettings() {
+        if (!BuildConfig.DEBUG) return
+        runCatching {
+            KeyManager.get(RemoteControllerKey.KeyChannelSettings, object : CompletionCallbackWith<ChannelSettings> {
+                override fun onSuccess(value: ChannelSettings?) {
+                    Log.d(TAG, "RC_CHANNEL_SETTINGS $value")
+                }
+
+                override fun onFailure(e: SkyException) {
+                    Log.w(TAG, "Unable to read RC channel settings: $e")
+                }
+            })
+        }.onFailure { Log.w(TAG, "RC channel settings request failed", it) }
+    }
+
     private fun stopSpeedChannelPolling() {
         rcPollingEnabled = false
         rcPollHandler.removeCallbacks(rcPollRunnable)
@@ -596,8 +926,79 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateSpeedFromChannels(channels: IntArray?) {
         if (channels == null || channels.size < 12) return
+        val effectiveChannels = channels.copyOf().also { values ->
+            if (BuildConfig.CONTROL_SIMULATOR) debugCh05Override?.let { values[4] = it }
+        }
+        val now = System.currentTimeMillis()
+        if (BuildConfig.DEBUG && now - lastRcChannelsLogTimeMs >= RC_CHANNEL_LOG_INTERVAL_MS) {
+            lastRcChannelsLogTimeMs = now
+            Log.d(TAG, "RC_CHANNELS ${channels.joinToString(prefix = "[", postfix = "]")} override=$debugCh05Override")
+        }
         val level = speedLevelFromCh12(channels[11])
-        runOnUiThread { updateSpeedBubbleUi(level) }
+        runOnUiThread {
+            updateSpeedBubbleUi(level)
+            if (BuildConfig.CONTROL_SIMULATOR) {
+                renderOperatorState(operatorControl.updateChannels(effectiveChannels))
+            }
+            if (!BuildConfig.CONTROL_SIMULATOR && operatorSnapshot.ch05 == Ch05Position.UP_MANUAL &&
+                operatorSnapshot.route == ConnectionRoute.INTERNET && operatorSnapshot.internetArmed) {
+                udpSender.send(ControlProtocol.rcChannels(++commandSequence, effectiveChannels))
+            }
+        }
+    }
+
+    private fun renderOperatorState(snapshot: OperatorSnapshot) {
+        operatorSnapshot = snapshot
+        val host = if (snapshot.route == ConnectionRoute.LOCAL) localJetsonHost()
+        else preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
+        if (host.isNotBlank()) udpSender.setTarget(host, DEFAULT_UDP_PORT)
+
+        val source = when (snapshot.ch05) {
+            Ch05Position.UP_MANUAL -> "MANUAL ${snapshot.route.name}"
+            Ch05Position.MIDDLE_SAFE -> "SAFE / DISABLED"
+            Ch05Position.DOWN_AUTONOMOUS -> "AUTONOMOUS LOCAL"
+            Ch05Position.UNKNOWN -> "RC CHANNELS UNKNOWN"
+        }
+        val ch05Diagnostic = snapshot.ch05Raw?.let { " · CH05 $it" }.orEmpty()
+        val simulationLabel = if (BuildConfig.CONTROL_SIMULATOR) {
+            if (debugCh05Override == null) "SIMULATOR · TAP FOR SIM CH05" else "SIM CH05 OVERRIDE · TAP TO CHANGE"
+        } else "LIVE · ${snapshot.telemetrySource}"
+        controlState.text = "$source$ch05Diagnostic\n$simulationLabel"
+        controlState.setTextColor(ContextCompat.getColor(this,
+            if (BuildConfig.CONTROL_SIMULATOR) R.color.industrial_warning else R.color.industrial_success))
+
+        val displaySpeed = snapshot.speedMetresPerSecond ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
+        val displayRoll = snapshot.rollDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
+        val displayPitch = snapshot.pitchDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
+        val speed = displaySpeed?.let { "%.2f m/s".format(it) } ?: "—"
+        telemetry.text = "SPEED $speed   ROLL ${ControlProtocol.direction(displayRoll, "LEFT", "RIGHT")}   " +
+            "PITCH ${ControlProtocol.direction(displayPitch, "BACKWARD", "FORWARD")}"
+        turnQueue.text = "TURN PENDING ${snapshot.totalTurns} / 6"
+
+        udpTargetButton.text = snapshot.route.name
+        udpTargetButton.isEnabled = snapshot.ch05 == Ch05Position.UP_MANUAL
+        internetArmButton.visibility = if (snapshot.ch05 == Ch05Position.UP_MANUAL && snapshot.route == ConnectionRoute.INTERNET) View.VISIBLE else View.GONE
+        internetArmButton.text = if (snapshot.internetArmed) "INTERNET ARMED" else "INTERNET SAFE"
+        autonomousProcessButton.visibility = if (
+            snapshot.ch05 == Ch05Position.MIDDLE_SAFE || snapshot.ch05 == Ch05Position.DOWN_AUTONOMOUS
+        ) View.VISIBLE else View.GONE
+        autonomousProcessButton.isEnabled = snapshot.autonomousState != AutonomousState.STARTING
+        autonomousProcessButton.text = when (snapshot.autonomousState) {
+            AutonomousState.STOPPED, AutonomousState.FAULT -> "START AUTONOMOUS"
+            AutonomousState.STARTING -> "STARTING…"
+            AutonomousState.READY -> "STOP AUTONOMOUS"
+        }
+        autonomousArmButton.visibility = if (snapshot.ch05 == Ch05Position.DOWN_AUTONOMOUS) View.VISIBLE else View.GONE
+        autonomousArmButton.isEnabled = snapshot.autonomousState == AutonomousState.READY
+        autonomousArmButton.text = if (snapshot.autonomousArmed) "AUTONOMOUS ARMED" else "AUTONOMOUS SAFE"
+
+        val manualTurnsEnabled = snapshot.ch05 == Ch05Position.UP_MANUAL && !snapshot.neutralInterlock &&
+            (snapshot.route == ConnectionRoute.LOCAL || snapshot.internetArmed)
+        listOf<Button>(findViewById(R.id.btnL2), findViewById(R.id.btnL1), findViewById(R.id.btnR1), findViewById(R.id.btnR2))
+            .forEach { it.isEnabled = manualTurnsEnabled }
+
+        lastActiveTurn = snapshot.activeTurn
+        setStatus(snapshot.message)
     }
 
     private fun speedLevelFromCh12(ch12: Int): Int {
@@ -638,9 +1039,11 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        rcPollHandler.removeCallbacks(operatorTickRunnable)
         stopSpeedChannelPolling()
         runCatching { RCSDKManager.disconnectRC() }
         if (::videoGrid.isInitialized) videoGrid.stopAll(clearUrls = false)
+        telemetryReceiver.close()
         udpSender.close()
         super.onDestroy()
     }
@@ -649,13 +1052,17 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "TankerMainActivity"
         private const val DEFAULT_JETSON_IP = "192.168.144.20"
         private const val DEFAULT_UDP_PORT = 5005
+        private const val TELEMETRY_UDP_PORT = 5006
         private const val CAMERA_COUNT = 6
         private val CAMERA_NAMES = listOf("FRONT C12", "CAMERA 2", "CAMERA 3", "CAMERA 4", "CAMERA 5", "CAMERA 6")
 
         private const val PREFERENCES_NAME = "tanker_operator_settings"
         private const val PREF_VIEW_MODE = "camera_view_mode"
         private const val PREF_FOCUSED_CAMERA = "focused_camera"
-        private const val PREF_C12_MODE = "c12_mode"
+        private const val PREF_LOCAL_HOST = "local_jetson_host"
+        private const val PREF_INTERNET_HOST = "internet_jetson_host"
+        private const val PREF_CAMERA_SCHEMA = "camera_config_schema"
+        private const val CAMERA_SCHEMA_VERSION = 2
         private fun cameraUrlKey(slot: Int) = "camera_url_$slot"
 
         private const val CH_MIN = 1050
@@ -663,5 +1070,7 @@ class MainActivity : AppCompatActivity() {
         private const val SPEED_LEVEL_COUNT = 7
         private const val RC_CHANNEL_POLL_INTERVAL_MS = 100L
         private const val RC_FAILURE_LOG_INTERVAL_MS = 2000L
+        private const val RC_CHANNEL_LOG_INTERVAL_MS = 500L
+        private const val OPERATOR_TICK_MS = 100L
     }
 }

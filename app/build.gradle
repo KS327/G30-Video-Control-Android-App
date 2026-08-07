@@ -6,18 +6,30 @@ plugins {
 android {
     namespace 'sg.hexcel.tankeramr'
     compileSdk 35
+    buildFeatures { buildConfig true }
 
     defaultConfig {
         applicationId 'sg.hexcel.tankeramr'
         minSdk 24
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 7
+        versionName '2.1.4'
     }
 
     buildTypes {
+        debug {
+            buildConfigField 'boolean', 'CONTROL_SIMULATOR', 'true'
+        }
+        commissioning {
+            initWith debug
+            matchingFallbacks = ['debug']
+            signingConfig signingConfigs.debug
+            debuggable true
+            buildConfigField 'boolean', 'CONTROL_SIMULATOR', 'false'
+        }
         release {
             minifyEnabled false
+            buildConfigField 'boolean', 'CONTROL_SIMULATOR', 'false'
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -43,4 +55,5 @@ dependencies {
     implementation files('libs/sky-ijkplayer-v1.1.aar')
     implementation files('libs/rcsdk-v1.9.2.aar')
     implementation files('libs/h16_airlink.aar')
+    testImplementation 'junit:junit:4.13.2'
 }
