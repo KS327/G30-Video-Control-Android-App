@@ -61,6 +61,13 @@ Default camera order:
 C12 starts on visible video after every fresh app launch. The CAMERAS editor provides
 `RESTORE VERIFIED` to recover the unique 1080p camera mapping.
 
+## Camera resilience
+
+- RTSP uses TCP to keep HEVC video stable across the receiver and Ethernet switch.
+- A stream that cannot connect within 10 seconds is stopped so it cannot consume resources needed by the other cameras or UDP controls.
+- If the C12 visible stream is unavailable, the app attempts the thermal stream once and informs the operator. Thermal uses software decoding for compatibility with the G30.
+- Stream replacement ignores delayed disconnect callbacks from the previous player, preventing a successful visible/thermal switch from being marked offline.
+
 ## Jetson network and runtime
 
 Expected Ethernet addresses:

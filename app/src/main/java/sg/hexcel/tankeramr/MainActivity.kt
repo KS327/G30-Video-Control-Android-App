@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -80,6 +81,8 @@ class MainActivity : AppCompatActivity() {
     private var commandSequence = 0L
     private var debugCh05Override: Int? = null
     private var pendingAutonomousAction: PendingAutonomousAction? = null
+    private var c12FallbackAttempted = false
+    private var c12OfflineNotified = false
 
     private val operatorTickRunnable = object : Runnable {
         override fun run() {
@@ -151,7 +154,10 @@ class MainActivity : AppCompatActivity() {
                 findViewById(R.id.tvCam4), findViewById(R.id.tvCam5)
             ),
             names = CAMERA_NAMES,
-            onStateChanged = { _, _ -> refreshStatusSummary() }
+            onStateChanged = { slot, state ->
+                if (slot == 0) handleC12StreamState(state)
+                refreshStatusSummary()
+            }
         )
 
         speedBubbles = listOf(
@@ -268,6 +274,8 @@ class MainActivity : AppCompatActivity() {
     private fun bindVideoButtons() {
         c12ModeButton.setOnClickListener {
             c12Mode = if (c12Mode == C12Mode.VISIBLE) C12Mode.THERMAL else C12Mode.VISIBLE
+            c12FallbackAttempted = c12Mode == C12Mode.THERMAL
+            c12OfflineNotified = false
             updateC12Button()
             val shouldPlay = !videoStoppedByOperator && 0 in visibleSlots(currentViewMode)
             videoGrid.setUrl(0, c12Url(), playNow = shouldPlay)
@@ -523,6 +531,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateC12Button() {
         c12ModeButton.text = c12Mode.name
+    }
+
+    private fun handleC12StreamState(state: VideoGridController.StreamState) {
+        if (state == VideoGridController.StreamState.LIVE) {
+            c12OfflineNotified = false
+            return
+        }
+        if (state != VideoGridController.StreamState.OFFLINE || videoStoppedByOperator) return
+
+        if (c12Mode == C12Mode.VISIBLE && !c12FallbackAttempted) {
+            c12FallbackAttempted = true
+            c12Mode = C12Mode.THERMAL
+            updateC12Button()
+            videoGrid.setUrl(0, c12Url(), playNow = 0 in visibleSlots(currentViewMode))
+            Toast.makeText(this, "C12 visible unavailable; trying thermal", Toast.LENGTH_LONG).show()
+        } else if (!c12OfflineNotified) {
+            c12OfflineNotified = true
+            Toast.makeText(this, "C12 unavailable; check or restart the C12 camera", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun bindUdpTargetButton() {
