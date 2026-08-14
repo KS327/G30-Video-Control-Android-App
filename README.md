@@ -21,8 +21,10 @@ Android operator app for Skydroid G30:
 - Jetson telemetry listener: UDP port `5006`.
 - INTERNET address is explicitly configured by the operator; the app never guesses a Tailscale IP.
 
-Commands and telemetry use versioned JSON (`v: 1`). Telemetry payload fields are `speed_mps`,
-`roll_deg`, `pitch_deg`, and `source`. Telemetry becomes stale after 1.5 seconds and the UI displays `—`.
+Commands and telemetry use versioned JSON (`v: 1`). Telemetry includes speed, roll, pitch,
+sensor readiness, Autonomous startup stage and a specific fault code. This lets the operator
+distinguish LiDAR, IMU, FAST-LIO, scan, TF, localization, Nav2 and Collision Monitor failures.
+Telemetry becomes stale after 1.5 seconds and the UI displays `—`.
 
 ## Debug simulator
 

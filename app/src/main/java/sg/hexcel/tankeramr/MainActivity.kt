@@ -963,7 +963,12 @@ class MainActivity : AppCompatActivity() {
         val simulationLabel = if (BuildConfig.CONTROL_SIMULATOR) {
             if (debugCh05Override == null) "SIMULATOR · TAP FOR SIM CH05" else "SIM CH05 OVERRIDE · TAP TO CHANGE"
         } else "LIVE · ${snapshot.telemetrySource}"
-        controlState.text = "$source$ch05Diagnostic\n$simulationLabel"
+        val runtimeDiagnostic = if (BuildConfig.CONTROL_SIMULATOR) "SIMULATED RUNTIME" else buildString {
+            append("SENSORS ${snapshot.sensorState} - AUTO ${snapshot.autonomousState.name}")
+            append(" - ${snapshot.autonomousStage}")
+            if (snapshot.autonomousFaultCode.isNotBlank()) append(" - FAULT ${snapshot.autonomousFaultCode}")
+        }
+        controlState.text = "$source$ch05Diagnostic\n$simulationLabel\n$runtimeDiagnostic"
         controlState.setTextColor(ContextCompat.getColor(this,
             if (BuildConfig.CONTROL_SIMULATOR) R.color.industrial_warning else R.color.industrial_success))
 

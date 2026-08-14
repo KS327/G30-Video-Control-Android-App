@@ -16,6 +16,9 @@ data class TelemetryPacket(
     val route: ConnectionRoute,
     val internetArmed: Boolean,
     val autonomousState: AutonomousState,
+    val autonomousStage: String,
+    val autonomousFaultCode: String,
+    val sensorState: String,
     val autonomousArmed: Boolean,
     val queuedTurns: Int,
     val totalTurns: Int,
@@ -59,6 +62,9 @@ class UdpTelemetryReceiver(private val port: Int = 5006) {
                                 autonomousState = runCatching {
                                     AutonomousState.valueOf(payload.optString("autonomous_state", "STOPPED"))
                                 }.getOrDefault(AutonomousState.FAULT),
+                                autonomousStage = payload.optString("autonomous_stage", "UNKNOWN"),
+                                autonomousFaultCode = payload.optString("autonomous_fault_code", ""),
+                                sensorState = payload.optString("sensor_state", "UNKNOWN"),
                                 autonomousArmed = payload.optBoolean("autonomous_armed", false),
                                 queuedTurns = payload.optInt("queued_turns", 0),
                                 totalTurns = payload.optInt("total_turns", payload.optInt("queued_turns", 0)),
