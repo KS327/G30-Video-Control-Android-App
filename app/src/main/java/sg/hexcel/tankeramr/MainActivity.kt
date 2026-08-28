@@ -41,6 +41,7 @@ import sg.hexcel.tankeramr.control.OperatorControl
 import sg.hexcel.tankeramr.control.OperatorSnapshot
 import sg.hexcel.tankeramr.control.UdpCommandSender
 import sg.hexcel.tankeramr.control.UdpTelemetryReceiver
+import sg.hexcel.tankeramr.gimbal.C12GimbalController
 import sg.hexcel.tankeramr.network.CameraScanner
 import sg.hexcel.tankeramr.video.VideoGridController
 
@@ -55,6 +56,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraGestureLayers: List<View>
     private lateinit var viewModeButton: Button
     private lateinit var c12ModeButton: Button
+    private lateinit var c12CenterButton: Button
+    private lateinit var c12GimbalState: TextView
     private lateinit var videoButton: Button
     private lateinit var udpTargetButton: Button
     private lateinit var controlState: TextView
@@ -83,9 +86,11 @@ class MainActivity : AppCompatActivity() {
     private var pendingAutonomousAction: PendingAutonomousAction? = null
     private var c12FallbackAttempted = false
     private var c12OfflineNotified = false
+    private lateinit var c12Gimbal: C12GimbalController
 
     private val operatorTickRunnable = object : Runnable {
         override fun run() {
+            if (::c12Gimbal.isInitialized) c12Gimbal.tick()
             val snapshot = operatorControl.tick()
             renderOperatorState(snapshot)
             if (BuildConfig.CONTROL_SIMULATOR) handleAutonomousCompletion(snapshot)
@@ -122,6 +127,8 @@ class MainActivity : AppCompatActivity() {
         cameraWall = findViewById(R.id.cameraWall)
         viewModeButton = findViewById(R.id.btnViewMode)
         c12ModeButton = findViewById(R.id.btnC12Mode)
+        c12CenterButton = findViewById(R.id.btnC12Center)
+        c12GimbalState = findViewById(R.id.tvC12GimbalState)
         videoButton = findViewById(R.id.btnStopVideo)
         udpTargetButton = findViewById(R.id.btnUdpTarget)
         controlState = findViewById(R.id.tvControlState)
@@ -167,11 +174,15 @@ class MainActivity : AppCompatActivity() {
             findViewById(R.id.speedBubble6)
         )
         updateSpeedBubbleUi(0)
+        c12Gimbal = C12GimbalController { state ->
+            runOnUiThread { renderC12GimbalState(state) }
+        }
 
         restoreOperatorState()
         videoGrid.setUrls(loadCameraUrls())
         bindViewModeButton()
         bindVideoButtons()
+        bindC12GimbalControls()
         bindCameraGestures()
         bindUdpTargetButton()
         bindOperatorControls()
@@ -301,6 +312,35 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnScan).setOnClickListener {
             scanAndChooseCamera { chosen -> chooseSlotThenPlay(chosen.primaryRtspUrl, chosen.ip) }
         }
+    }
+
+    private fun bindC12GimbalControls() {
+        c12CenterButton.setOnClickListener {
+            if (c12Gimbal.center()) {
+                setStatus("C12 returning to centre")
+                Toast.makeText(this, "C12 centring", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Centre CH13/CH14 and set CH06 middle or down",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        renderC12GimbalState(C12GimbalController.State.DISCONNECTED)
+    }
+
+    private fun renderC12GimbalState(state: C12GimbalController.State) {
+        c12GimbalState.text = state.operatorText
+        c12CenterButton.isEnabled = state == C12GimbalController.State.READY
+        c12GimbalState.setTextColor(ContextCompat.getColor(this, when (state) {
+            C12GimbalController.State.READY,
+            C12GimbalController.State.ACTIVE -> R.color.industrial_success
+            C12GimbalController.State.WAITING_NEUTRAL -> R.color.industrial_warning
+            C12GimbalController.State.RC_LOST,
+            C12GimbalController.State.ERROR -> R.color.industrial_danger
+            else -> R.color.industrial_text_secondary
+        }))
     }
 
     private fun showCameraUrlEditor() {
@@ -841,6 +881,7 @@ class MainActivity : AppCompatActivity() {
             RCSDKManager.initSDK(this, object : SDKManagerCallBack {
                 override fun onRcConnected() {
                     rcConnected = true
+                    c12Gimbal.setRcConnected(true)
                     logRcChannelSettings()
                     startSpeedChannelPolling()
                     refreshStatusSummary()
@@ -848,12 +889,14 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onRcConnectFail(e: SkyException?) {
                     rcConnected = false
+                    c12Gimbal.setRcConnected(false)
                     Log.w(TAG, "RCSDK connect failed: $e")
                     refreshStatusSummary()
                 }
 
                 override fun onRcDisconnect() {
                     rcConnected = false
+                    c12Gimbal.setRcConnected(false)
                     stopSpeedChannelPolling()
                     refreshStatusSummary()
                 }
@@ -930,6 +973,7 @@ class MainActivity : AppCompatActivity() {
             if (BuildConfig.CONTROL_SIMULATOR) debugCh05Override?.let { values[4] = it }
         }
         val now = System.currentTimeMillis()
+        c12Gimbal.updateChannels(effectiveChannels)
         if (BuildConfig.DEBUG && now - lastRcChannelsLogTimeMs >= RC_CHANNEL_LOG_INTERVAL_MS) {
             lastRcChannelsLogTimeMs = now
             Log.d(TAG, "RC_CHANNELS ${channels.joinToString(prefix = "[", postfix = "]")} override=$debugCh05Override")
@@ -1043,9 +1087,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    override fun onStart() {
+        super.onStart()
+        if (::c12Gimbal.isInitialized) c12Gimbal.start()
+    }
+
+    override fun onStop() {
+        if (::c12Gimbal.isInitialized) c12Gimbal.stop()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         rcPollHandler.removeCallbacks(operatorTickRunnable)
         stopSpeedChannelPolling()
+        if (::c12Gimbal.isInitialized) c12Gimbal.stop()
         runCatching { RCSDKManager.disconnectRC() }
         if (::videoGrid.isInitialized) videoGrid.stopAll(clearUrls = false)
         telemetryReceiver.close()

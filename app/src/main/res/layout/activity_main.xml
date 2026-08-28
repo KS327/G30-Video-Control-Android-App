@@ -255,10 +255,34 @@
                     android:textSize="11sp"
                     android:textStyle="bold" />
 
+                <TextView
+                    android:id="@+id/tvC12GimbalState"
+                    android:layout_width="82dp"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:maxLines="2"
+                    android:text="GIMBAL OFFLINE"
+                    android:textColor="@color/industrial_text_secondary"
+                    android:textSize="8sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnC12Center"
+                    style="@style/IndustrialButton"
+                    android:layout_width="70dp"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="4dp"
+                    android:enabled="false"
+                    android:minHeight="0dp"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="CENTER"
+                    android:textSize="8sp" />
+
                 <Button
                     android:id="@+id/btnC12Mode"
                     style="@style/IndustrialPrimaryButton"
-                    android:layout_width="92dp"
+                    android:layout_width="72dp"
                     android:layout_height="32dp"
                     android:minHeight="0dp"
                     android:paddingStart="6dp"
