@@ -26,7 +26,7 @@ class CameraScanner {
     companion object {
         /**
          * Confirmed JINGYANG / XM 1080P camera RTSP pattern for username admin and empty password.
-         * All four installed cameras were verified as HEVC 1920x1080 @ 25 fps on stream=0.
+         * All three installed IP cameras were verified as HEVC 1920x1080 @ 25 fps on stream=0.
          * Their stream=1 profiles are inconsistent (352x288 or 704x576) and caused distorted
          * rendering on the G30, so the verified main stream is the production default.
          */
@@ -38,7 +38,6 @@ class CameraScanner {
         val VERIFIED_IP_CAMERA_IPS = listOf(
             "192.168.144.100",
             "192.168.144.110",
-            "192.168.144.130",
             "192.168.144.120"
         )
 
@@ -53,10 +52,9 @@ class CameraScanner {
             return trimmed.replace("&stream=1.sdp", "&stream=0.sdp")
         }
 
-        fun defaultSixCameraUrls(): List<String> = listOf(
+        fun defaultCameraUrls(): List<String> = listOf(
             C12_VISIBLE_URL,
-            *VERIFIED_IP_CAMERA_IPS.map(::buildXmEyeRtspUrl).toTypedArray(),
-            ""
+            *VERIFIED_IP_CAMERA_IPS.map(::buildXmEyeRtspUrl).toTypedArray()
         )
     }
 

@@ -4,12 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CameraScannerTest {
-    @Test fun productionDefaultsContainFourVerifiedMainStreams() {
-        val urls = CameraScanner.defaultSixCameraUrls()
+    @Test fun productionDefaultsContainC12AndThreeVerifiedMainStreams() {
+        val urls = CameraScanner.defaultCameraUrls()
         assertEquals(CameraScanner.C12_VISIBLE_URL, urls[0])
-        assertEquals(listOf("100", "110", "130", "120"),
-            urls.slice(1..4).map { it.substringAfter("192.168.144.").substringBefore(':') })
-        urls.slice(1..4).forEach { assertEquals(true, it.endsWith("stream=0.sdp")) }
+        assertEquals(listOf("100", "110", "120"),
+            urls.slice(1..3).map { it.substringAfter("192.168.144.").substringBefore(':') })
+        urls.slice(1..3).forEach { assertEquals(true, it.endsWith("stream=0.sdp")) }
     }
 
     @Test fun migrationUpgradesOnlyKnownXmSubstreamShape() {

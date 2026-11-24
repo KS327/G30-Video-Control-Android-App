@@ -33,12 +33,12 @@ import com.skydroid.rcsdk.key.RemoteControllerKey
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import sg.hexcel.tankeramr.control.TurnButton
-import sg.hexcel.tankeramr.control.AutonomousState
 import sg.hexcel.tankeramr.control.Ch05Position
 import sg.hexcel.tankeramr.control.ConnectionRoute
 import sg.hexcel.tankeramr.control.ControlProtocol
 import sg.hexcel.tankeramr.control.OperatorControl
 import sg.hexcel.tankeramr.control.OperatorSnapshot
+import sg.hexcel.tankeramr.control.SidexState
 import sg.hexcel.tankeramr.control.UdpCommandSender
 import sg.hexcel.tankeramr.control.UdpTelemetryReceiver
 import sg.hexcel.tankeramr.gimbal.C12GimbalController
@@ -48,7 +48,7 @@ import sg.hexcel.tankeramr.video.VideoGridController
 class MainActivity : AppCompatActivity() {
     private enum class ViewMode { FOCUS, FOUR, SIX, FULLSCREEN }
     private enum class C12Mode { VISIBLE, THERMAL }
-    private enum class PendingAutonomousAction { START, STOP }
+    private enum class PendingSidexAction { START, STOP }
 
     private lateinit var status: TextView
     private lateinit var cameraWall: ConstraintLayout
@@ -63,9 +63,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var controlState: TextView
     private lateinit var telemetry: TextView
     private lateinit var turnQueue: TextView
+    private lateinit var zeroTelemetryButton: Button
     private lateinit var internetArmButton: Button
-    private lateinit var autonomousProcessButton: Button
-    private lateinit var autonomousArmButton: Button
+    private lateinit var sidexDemoButton: Button
+    private lateinit var collisionMonitorButton: Button
+    private lateinit var sidexMapButton: Button
     private lateinit var speedBubbles: List<TextView>
     private lateinit var videoGrid: VideoGridController
     private lateinit var preferences: SharedPreferences
@@ -78,14 +80,18 @@ class MainActivity : AppCompatActivity() {
 
     private val udpSender = UdpCommandSender(host = DEFAULT_JETSON_IP, port = DEFAULT_UDP_PORT)
     private val telemetryReceiver = UdpTelemetryReceiver(TELEMETRY_UDP_PORT)
-    private val operatorControl = OperatorControl()
+    private val operatorControl = OperatorControl(sidexAvailableByDefault = BuildConfig.CONTROL_SIMULATOR)
     private var operatorSnapshot = OperatorSnapshot()
     private var lastActiveTurn: TurnButton? = null
     private var commandSequence = 0L
     private var debugCh05Override: Int? = null
-    private var pendingAutonomousAction: PendingAutonomousAction? = null
+    private var pendingSidexAction: PendingSidexAction? = null
+    private var lastSidexCompletionSignature: String? = null
+    private var lastSidexFaultSignature: String? = null
     private var c12FallbackAttempted = false
     private var c12OfflineNotified = false
+    private var pendingCollisionMonitorState: Boolean? = null
+    private var collisionCommandDeadlineMs = 0L
     private lateinit var c12Gimbal: C12GimbalController
 
     private val operatorTickRunnable = object : Runnable {
@@ -93,7 +99,7 @@ class MainActivity : AppCompatActivity() {
             if (::c12Gimbal.isInitialized) c12Gimbal.tick()
             val snapshot = operatorControl.tick()
             renderOperatorState(snapshot)
-            if (BuildConfig.CONTROL_SIMULATOR) handleAutonomousCompletion(snapshot)
+            if (BuildConfig.CONTROL_SIMULATOR) handleSidexCompletion(snapshot)
             rcPollHandler.postDelayed(this, OPERATOR_TICK_MS)
         }
     }
@@ -134,31 +140,31 @@ class MainActivity : AppCompatActivity() {
         controlState = findViewById(R.id.tvControlState)
         telemetry = findViewById(R.id.tvTelemetry)
         turnQueue = findViewById(R.id.tvTurnQueue)
+        zeroTelemetryButton = findViewById(R.id.btnZeroTelemetry)
         internetArmButton = findViewById(R.id.btnInternetArm)
-        autonomousProcessButton = findViewById(R.id.btnAutonomousProcess)
-        autonomousArmButton = findViewById(R.id.btnAutonomousArm)
+        sidexDemoButton = findViewById(R.id.btnSidexDemo)
+        collisionMonitorButton = findViewById(R.id.btnCollisionMonitor)
+        sidexMapButton = findViewById(R.id.btnSidexTeach)
 
         cameraFrames = listOf(
             findViewById(R.id.frameCam0), findViewById(R.id.frameCam1),
-            findViewById(R.id.frameCam2), findViewById(R.id.frameCam3),
-            findViewById(R.id.frameCam4), findViewById(R.id.frameCam5)
+            findViewById(R.id.frameCam2), findViewById(R.id.frameCam3)
         )
         cameraGestureLayers = listOf(
             findViewById(R.id.gestureCam0), findViewById(R.id.gestureCam1),
-            findViewById(R.id.gestureCam2), findViewById(R.id.gestureCam3),
-            findViewById(R.id.gestureCam4), findViewById(R.id.gestureCam5)
+            findViewById(R.id.gestureCam2), findViewById(R.id.gestureCam3)
         )
+        findViewById<FrameLayout>(R.id.frameCam4).visibility = View.GONE
+        findViewById<FrameLayout>(R.id.frameCam5).visibility = View.GONE
 
         videoGrid = VideoGridController(
             widgets = listOf(
                 findViewById(R.id.fpv0), findViewById(R.id.fpv1),
-                findViewById(R.id.fpv2), findViewById(R.id.fpv3),
-                findViewById(R.id.fpv4), findViewById(R.id.fpv5)
+                findViewById(R.id.fpv2), findViewById(R.id.fpv3)
             ),
             labels = listOf(
                 findViewById(R.id.tvCam0), findViewById(R.id.tvCam1),
-                findViewById(R.id.tvCam2), findViewById(R.id.tvCam3),
-                findViewById(R.id.tvCam4), findViewById(R.id.tvCam5)
+                findViewById(R.id.tvCam2), findViewById(R.id.tvCam3)
             ),
             names = CAMERA_NAMES,
             onStateChanged = { slot, state ->
@@ -199,7 +205,7 @@ class MainActivity : AppCompatActivity() {
             onTelemetry = { packet -> runOnUiThread {
                 val snapshot = operatorControl.updateRemote(packet)
                 renderOperatorState(snapshot)
-                handleAutonomousCompletion(snapshot)
+                handleSidexCompletion(snapshot)
             } },
             onError = { setStatus(it) }
         )
@@ -214,7 +220,7 @@ class MainActivity : AppCompatActivity() {
         focusedCameraSlot = preferences.getInt(PREF_FOCUSED_CAMERA, 0).coerceIn(0, CAMERA_COUNT - 1)
         currentViewMode = preferences.getString(PREF_VIEW_MODE, ViewMode.FOCUS.name)
             ?.let { runCatching { ViewMode.valueOf(it) }.getOrNull() }
-            ?.takeUnless { it == ViewMode.FULLSCREEN }
+            ?.takeUnless { it == ViewMode.FULLSCREEN || it == ViewMode.SIX }
             ?: ViewMode.FOCUS
         previousViewMode = currentViewMode
         // Deterministic operator startup: always begin with the visible C12 feed.
@@ -225,8 +231,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun migrateCameraConfiguration() {
         if (preferences.getInt(PREF_CAMERA_SCHEMA, 0) >= CAMERA_SCHEMA_VERSION) return
-        val defaults = CameraScanner.defaultSixCameraUrls()
-        val existing = (1..4).map { preferences.getString(cameraUrlKey(it), null)?.trim().orEmpty() }
+        val defaults = CameraScanner.defaultCameraUrls()
+        val existing = (1..3).map { preferences.getString(cameraUrlKey(it), null)?.trim().orEmpty() }
         val knownAssignments = existing.map { url ->
             CameraScanner.VERIFIED_IP_CAMERA_IPS.firstOrNull { ip -> url.contains(ip) }
         }
@@ -236,7 +242,7 @@ class MainActivity : AppCompatActivity() {
         preferences.edit().apply {
             // Repair duplicate/missing assignments only when all saved entries belong to
             // the known TankerAMR camera set. Unrelated custom RTSP URLs are preserved.
-            for (slot in 1..4) {
+            for (slot in 1..3) {
                 val key = cameraUrlKey(slot)
                 val current = existing[slot - 1]
                 val migrated = if (onlyKnownOrBlank && knownLayoutIsInvalid) defaults[slot]
@@ -244,12 +250,14 @@ class MainActivity : AppCompatActivity() {
                 else CameraScanner.preferMainStream(current)
                 putString(key, migrated)
             }
+            remove(cameraUrlKey(4))
+            remove(cameraUrlKey(5))
             putInt(PREF_CAMERA_SCHEMA, CAMERA_SCHEMA_VERSION)
         }.apply()
     }
 
     private fun loadCameraUrls(): List<String> {
-        val defaults = CameraScanner.defaultSixCameraUrls().toMutableList()
+        val defaults = CameraScanner.defaultCameraUrls().toMutableList()
         defaults[0] = c12Url()
         return defaults.mapIndexed { index, default ->
             preferences.getString(cameraUrlKey(index), default) ?: default
@@ -264,13 +272,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindViewModeButton() {
         viewModeButton.setOnClickListener {
-            val modes = arrayOf("Focus 1 + 5", "Four cameras (2 x 2)", "All six cameras (3 x 2)")
+            val modes = arrayOf("Focus 1 + 3", "All four cameras (2 x 2)")
             AlertDialog.Builder(this)
                 .setTitle("Camera view")
                 .setItems(modes) { _, which ->
                     val selected = when (which) {
                         1 -> ViewMode.FOUR
-                        2 -> ViewMode.SIX
                         else -> ViewMode.FOCUS
                     }
                     previousViewMode = selected
@@ -351,8 +358,8 @@ class MainActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
         AlertDialog.Builder(this)
-            .setTitle("Six camera endpoints")
-            .setMessage("One RTSP URL per line. Line 1 is FRONT C12; blank lines keep unused slots visible as NOT SET.")
+            .setTitle("Four camera endpoints")
+            .setMessage("One RTSP URL per line: C12, front middle, back left, and back right.")
             .setView(input)
             .setPositiveButton("Save and play") { _, _ ->
                 val urls = input.text.toString().lines().map { it.trim() }.take(CAMERA_COUNT).toMutableList()
@@ -369,12 +376,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restoreVerifiedCameraLayout() {
-        val urls = CameraScanner.defaultSixCameraUrls().toMutableList().also { it[0] = c12Url() }
+        val urls = CameraScanner.defaultCameraUrls().toMutableList().also { it[0] = c12Url() }
         saveCameraUrls(urls)
         preferences.edit().putInt(PREF_CAMERA_SCHEMA, CAMERA_SCHEMA_VERSION).apply()
         videoGrid.setUrls(urls)
         if (!videoStoppedByOperator) videoGrid.playVisible(visibleSlots(currentViewMode))
-        setStatus("Restored C12 and four verified 1080p IP cameras")
+        setStatus("Restored C12 and three verified IP cameras")
     }
 
     private fun bindCameraGestures() {
@@ -447,7 +454,7 @@ class MainActivity : AppCompatActivity() {
         when (mode) {
             ViewMode.FOCUS -> applyFocusConstraints(constraints)
             ViewMode.FOUR -> applyFourCameraConstraints(constraints)
-            ViewMode.SIX -> applySixCameraConstraints(constraints)
+            ViewMode.SIX -> applyFourCameraConstraints(constraints)
             ViewMode.FULLSCREEN -> place(
                 constraints, cameraFrames[focusedCameraSlot].id,
                 ConstraintSet.PARENT_ID, ConstraintSet.LEFT,
@@ -559,7 +566,7 @@ class MainActivity : AppCompatActivity() {
         viewModeButton.text = when (currentViewMode) {
             ViewMode.FOCUS -> "VIEW · FOCUS"
             ViewMode.FOUR -> "VIEW · 4 CAM"
-            ViewMode.SIX -> "VIEW · 6 CAM"
+            ViewMode.SIX -> "VIEW · 4 CAM"
             ViewMode.FULLSCREEN -> "VIEW · FULL"
         }
     }
@@ -594,31 +601,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindUdpTargetButton() {
         udpTargetButton.setOnClickListener {
-            AlertDialog.Builder(this)
-                .setTitle("Manual connection route")
-                .setItems(arrayOf(
-                    "LOCAL · ${localJetsonHost()}",
-                    "INTERNET · Tailscale VPN",
-                    "Configure LOCAL address",
-                    "Configure INTERNET address",
-                    "Test current connection",
-                    "Safety: route changes require CH05 up"
-                )) { _, which ->
-                    when (which) {
-                        0 -> selectOperatorRoute(ConnectionRoute.LOCAL)
-                        1 -> {
-                            val host = preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
-                            if (host.isBlank()) showInternetEndpointEditor()
-                            else selectOperatorRoute(ConnectionRoute.INTERNET)
-                        }
-                        2 -> showLocalEndpointEditor()
-                        3 -> showInternetEndpointEditor()
-                        4 -> sendProductionCommand("ping")
-                        else -> setStatus("Route change applies a 0.5 s neutral interlock")
-                    }
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+            when (operatorSnapshot.ch05) {
+                Ch05Position.UP_RF_SIDEX -> showDestinationEditor(
+                    title = "Local Jetson destination",
+                    preferenceKey = PREF_LOCAL_HOST,
+                    defaultHost = DEFAULT_JETSON_IP,
+                    destinationName = "LOCAL"
+                )
+                Ch05Position.DOWN_INTERNET -> showDestinationEditor(
+                    title = "Tailscale Jetson destination",
+                    preferenceKey = PREF_INTERNET_HOST,
+                    defaultHost = DEFAULT_TAILSCALE_IP,
+                    destinationName = "TAILSCALE"
+                )
+                Ch05Position.MIDDLE_SAFE, Ch05Position.UNKNOWN ->
+                    setStatus("Choose destination with CH05 up or down")
+            }
         }
     }
 
@@ -626,62 +624,80 @@ class MainActivity : AppCompatActivity() {
         preferences.getString(PREF_LOCAL_HOST, DEFAULT_JETSON_IP)?.trim().orEmpty()
             .ifBlank { DEFAULT_JETSON_IP }
 
-    private fun showLocalEndpointEditor() {
-        val input = EditText(this).apply {
-            hint = "Jetson Ethernet IP"
-            setSingleLine(true)
-            setText(localJetsonHost())
-            inputType = InputType.TYPE_CLASS_TEXT
-            setSelectAllOnFocus(true)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("LOCAL Jetson endpoint")
-            .setMessage("Default: $DEFAULT_JETSON_IP. Commands use UDP port $DEFAULT_UDP_PORT.")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val host = input.text.toString().trim()
-                if (host.isBlank()) setStatus("LOCAL endpoint unchanged: address is empty")
-                else {
-                    preferences.edit().putString(PREF_LOCAL_HOST, host).apply()
-                    if (operatorSnapshot.route == ConnectionRoute.LOCAL) udpSender.setTarget(host, DEFAULT_UDP_PORT)
-                    setStatus("LOCAL endpoint saved: $host:$DEFAULT_UDP_PORT")
-                }
-            }
-            .setNeutralButton("Restore default") { _, _ ->
-                preferences.edit().putString(PREF_LOCAL_HOST, DEFAULT_JETSON_IP).apply()
-                udpSender.setTarget(DEFAULT_JETSON_IP, DEFAULT_UDP_PORT)
-                setStatus("LOCAL endpoint restored: $DEFAULT_JETSON_IP:$DEFAULT_UDP_PORT")
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
+    private fun internetJetsonHost(): String =
+        preferences.getString(PREF_INTERNET_HOST, DEFAULT_TAILSCALE_IP)?.trim().orEmpty()
+            .ifBlank { DEFAULT_TAILSCALE_IP }
 
-    private fun showInternetEndpointEditor() {
+    private fun showDestinationEditor(
+        title: String,
+        preferenceKey: String,
+        defaultHost: String,
+        destinationName: String
+    ) {
         val input = EditText(this).apply {
-            hint = "Jetson Tailscale IP (for example 100.x.x.x)"
+            hint = "Jetson IP address"
             setSingleLine(true)
-            setText(preferences.getString(PREF_INTERNET_HOST, ""))
+            setText(preferences.getString(preferenceKey, defaultHost)?.trim().orEmpty().ifBlank { defaultHost })
             inputType = InputType.TYPE_CLASS_TEXT
             setSelectAllOnFocus(true)
         }
-        AlertDialog.Builder(this)
-            .setTitle("INTERNET Jetson endpoint")
-            .setMessage("Enter the Jetson's exact Tailscale IP. It is intentionally not guessed.")
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage("Default: $defaultHost · UDP $DEFAULT_UDP_PORT")
             .setView(input)
-            .setPositiveButton("Save") { _, _ ->
+            .setPositiveButton("Save", null)
+            .setNeutralButton("Test", null)
+            .setNegativeButton("Default", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val host = input.text.toString().trim()
-                if (host.isBlank()) setStatus("INTERNET endpoint not saved: address is empty")
+                if (host.isBlank()) setStatus("$destinationName destination unchanged: address is empty")
                 else {
-                    preferences.edit().putString(PREF_INTERNET_HOST, host).apply()
-                    setStatus("INTERNET endpoint saved: $host:$DEFAULT_UDP_PORT")
-                    selectOperatorRoute(ConnectionRoute.INTERNET)
+                    preferences.edit().putString(preferenceKey, host).apply()
+                    udpSender.setTarget(host, DEFAULT_UDP_PORT)
+                    setStatus("$destinationName destination saved: $host:$DEFAULT_UDP_PORT")
+                    renderOperatorState(operatorControl.snapshot())
+                    dialog.dismiss()
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                val host = input.text.toString().trim()
+                if (host.isBlank()) setStatus("Enter an IP address before testing")
+                else {
+                    udpSender.sendTo(host, DEFAULT_UDP_PORT, ControlProtocol.command(++commandSequence, "ping"))
+                    setStatus("Testing $destinationName destination: $host:$DEFAULT_UDP_PORT")
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                preferences.edit().putString(preferenceKey, defaultHost).apply()
+                input.setText(defaultHost)
+                udpSender.setTarget(defaultHost, DEFAULT_UDP_PORT)
+                setStatus("$destinationName destination restored: $defaultHost:$DEFAULT_UDP_PORT")
+                renderOperatorState(operatorControl.snapshot())
+            }
+        }
+        dialog.show()
     }
 
     private fun bindOperatorControls() {
+        zeroTelemetryButton.setOnClickListener {
+            val snapshot = operatorControl.snapshot()
+            if (snapshot.telemetrySource == "STALE") {
+                setStatus("ZERO TELEMETRY requires fresh Jetson telemetry")
+            } else if (kotlin.math.abs(snapshot.speedMetresPerSecond ?: Double.POSITIVE_INFINITY) > 0.03) {
+                setStatus("Stop TankerAMR before zeroing telemetry")
+            } else if (OperatorControl.isSidexActive(snapshot.sidexState) || snapshot.sidexArmed) {
+                setStatus("Stop SIDEX DEMO before zeroing telemetry")
+            } else if (snapshot.ch05 == Ch05Position.DOWN_INTERNET && snapshot.internetArmed) {
+                setStatus("Disarm INTERNET control before zeroing telemetry")
+            } else if (snapshot.ch05 == Ch05Position.UNKNOWN) {
+                setStatus("ZERO TELEMETRY requires a valid CH05 signal")
+            } else {
+                sendProductionCommandReliable("telemetry_zero")
+                setStatus("Zeroing speed, roll, pitch and yaw at current pose")
+            }
+        }
         internetArmButton.setOnClickListener {
             val result = operatorControl.toggleInternetArm()
             renderOperatorState(result)
@@ -689,36 +705,81 @@ class MainActivity : AppCompatActivity() {
                 sendProductionCommand("internet_arm", JSONObject().put("armed", result.internetArmed))
             }
         }
-        autonomousProcessButton.setOnClickListener {
-            if (BuildConfig.CONTROL_SIMULATOR) {
-                val before = operatorControl.snapshot().autonomousState
-                val result = operatorControl.toggleAutonomousProcess()
-                renderOperatorState(result)
-                if (result.autonomousState != before) pendingAutonomousAction =
-                    if (result.autonomousState == AutonomousState.STARTING) PendingAutonomousAction.START
-                    else PendingAutonomousAction.STOP
-            } else when (operatorSnapshot.autonomousState) {
-                AutonomousState.STOPPED, AutonomousState.FAULT -> confirmStartAutonomous()
-                AutonomousState.READY -> requestAutonomousProcess(PendingAutonomousAction.STOP)
-                AutonomousState.STARTING -> setStatus("AUTONOMOUS startup is already in progress")
+        sidexDemoButton.setOnClickListener {
+            when (operatorSnapshot.sidexState) {
+                SidexState.STOPPED, SidexState.COMPLETE, SidexState.FAULT -> confirmStartSidex()
+                SidexState.STARTING, SidexState.RUNNING, SidexState.PAUSED -> confirmStopSidex()
             }
         }
-        autonomousArmButton.setOnClickListener {
-            val result = operatorControl.toggleAutonomousArm()
-            renderOperatorState(result)
-            if (result.message == "AUTONOMOUS ARMED" || result.message == "AUTONOMOUS DISARMED") {
-                sendProductionCommand("autonomous_arm", JSONObject().put("armed", result.autonomousArmed))
+        collisionMonitorButton.setOnClickListener {
+            val snapshot = operatorControl.snapshot()
+            if (!OperatorControl.isSidexActive(snapshot.sidexState)) {
+                setStatus("Start SIDEX DEMO before changing collision monitoring")
+            } else {
+                val desired = !snapshot.collisionMonitorActive
+                pendingCollisionMonitorState = desired
+                collisionCommandDeadlineMs = System.currentTimeMillis() + 2500L
+                val action = if (desired) "collision_on" else "collision_off"
+                if (!BuildConfig.CONTROL_SIMULATOR) {
+                    val packets = List(3) {
+                        ControlProtocol.sidex(++commandSequence, action)
+                    }
+                    udpSender.sendBurst(packets, intervalMs = 120L)
+                }
+                setStatus(if (desired) "Requesting collision monitoring ON" else "Requesting collision monitoring OFF")
             }
         }
+        sidexMapButton.setOnClickListener { showMapControls() }
+    }
+
+    private fun showMapControls() {
+        val snapshot = operatorControl.snapshot()
+        if (!snapshot.mapRecording) {
+            if (snapshot.ch05 != Ch05Position.UP_RF_SIDEX) {
+                setStatus("MAP COURSE requires CH05 up for manual RF driving")
+                return
+            }
+            if (!snapshot.mapAvailable) {
+                setStatus("MAP COURSE backend is not ready")
+                return
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Map SiDex course?")
+                .setMessage(
+                    "Place Tanker at the marked start. Keep CH05 up and manually drive one slow, " +
+                        "clear stair/ramp lap. Return to the same mark before saving. Autonomous drive remains disarmed."
+                )
+                .setPositiveButton("Start scan") { _, _ -> requestSidexMap("start") }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Course scan active")
+            .setMessage(
+                "Recorded: %.0f seconds\nReturn Tanker to the marked start and stop before Save Map."
+                    .format(snapshot.mapDurationSeconds)
+            )
+            .setPositiveButton("Save map") { _, _ -> requestSidexMap("save") }
+            .setNegativeButton("Cancel scan") { _, _ -> requestSidexMap("cancel") }
+            .show()
+    }
+
+    private fun requestSidexMap(action: String) {
+        if (!BuildConfig.CONTROL_SIMULATOR) {
+            udpSender.send(ControlProtocol.sidexMap(++commandSequence, action))
+        }
+        setStatus("MAP COURSE ${action.uppercase()} submitted")
     }
 
     private fun bindDebugSimulatorControls() {
         if (!BuildConfig.CONTROL_SIMULATOR) return
         controlState.setOnClickListener {
             val choices = arrayOf(
-                "UP · MANUAL",
+                "UP · RF + SIDEX",
                 "MIDDLE · SAFE",
-                "DOWN · AUTONOMOUS",
+                "DOWN · INTERNET",
                 "USE PHYSICAL RCSDK VALUE"
             )
             AlertDialog.Builder(this)
@@ -741,91 +802,163 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun selectOperatorRoute(route: ConnectionRoute) {
-        val before = operatorControl.snapshot().route
-        val result = operatorControl.selectRoute(route)
-        if (result.route != before) sendRouteCommand(before, route)
-        renderOperatorState(result)
-    }
-
-    private fun sendRouteCommand(previousRoute: ConnectionRoute, route: ConnectionRoute) {
-        if (BuildConfig.CONTROL_SIMULATOR) return
-        val packet = ControlProtocol.command(
-            ++commandSequence,
-            "connection_route",
-            JSONObject().put("route", route.name)
-        )
-        val previousHost = if (previousRoute == ConnectionRoute.LOCAL) localJetsonHost()
-        else preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
-        if (previousHost.isNotBlank()) udpSender.sendTo(previousHost, DEFAULT_UDP_PORT, packet)
-
-        // Returning to LOCAL must remain recoverable even when the selected
-        // INTERNET/Tailscale path is currently unavailable.
-        if (route == ConnectionRoute.LOCAL && previousHost != localJetsonHost()) {
-            udpSender.sendTo(localJetsonHost(), DEFAULT_UDP_PORT, packet)
+    private fun confirmStartSidex() {
+        val result = operatorControl.snapshot()
+        if (result.ch05 != Ch05Position.UP_RF_SIDEX) {
+            setStatus("SIDEX DEMO requires CH05 up")
+            return
         }
-    }
-
-    private fun confirmStartAutonomous() {
+        if (!result.sidexAvailable) {
+            setStatus("SIDEX backend is not ready")
+            return
+        }
         AlertDialog.Builder(this)
-            .setTitle("Start AUTONOMOUS?")
+            .setTitle("Start SiDex Demo?")
             .setMessage(
-                "This starts Nav2 and Collision Monitor. It does not arm motion. " +
-                    "Movement still requires CH05 down and a separate AUTONOMOUS ARMED action."
+                "The Tanker will use the saved 3D course map, LiDAR collision monitoring and IMU stage checks. " +
+                    "It will approach, climb, turn left, descend and return through three ground turns. Keep CH05 up."
             )
-            .setPositiveButton("Start") { _, _ -> requestAutonomousProcess(PendingAutonomousAction.START) }
+            .setPositiveButton("Start") { _, _ ->
+                val started = operatorControl.toggleSidexDemo()
+                renderOperatorState(started)
+                if (started.sidexState == SidexState.STARTING) requestSidexDemo(PendingSidexAction.START)
+            }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun requestAutonomousProcess(action: PendingAutonomousAction) {
-        pendingAutonomousAction = action
-        sendProductionCommand(
-            "autonomous_process",
-            JSONObject().put("action", if (action == PendingAutonomousAction.START) "start" else "stop")
-        )
-        setStatus(if (action == PendingAutonomousAction.START) "Starting AUTONOMOUS; waiting for READY"
-            else "Stopping AUTONOMOUS; waiting for full shutdown")
+    private fun confirmStopSidex() {
+        val paused = operatorControl.snapshot().sidexState == SidexState.PAUSED
+        AlertDialog.Builder(this)
+            .setTitle("Stop SiDex Demo?")
+            .setMessage(
+                if (paused) {
+                    "The Tanker is paused for an obstacle and will resume automatically after the path is clear. " +
+                        "Choose Stop only if you want to end the complete SiDex loop. CH05 middle remains the immediate safety stop."
+                } else {
+                    "This ends the complete SiDex loop. Use CH05 middle for an immediate safety stop."
+                }
+            )
+            .setPositiveButton("Stop demo") { _, _ ->
+                val result = operatorControl.toggleSidexDemo()
+                renderOperatorState(result)
+                if (result.sidexState == SidexState.STOPPED) {
+                    requestSidexDemo(PendingSidexAction.STOP)
+                }
+            }
+            .setNegativeButton("Keep running", null)
+            .show()
     }
 
-    private fun handleAutonomousCompletion(snapshot: OperatorSnapshot) {
-        when (pendingAutonomousAction) {
-            PendingAutonomousAction.START -> when (snapshot.autonomousState) {
-                AutonomousState.READY -> {
-                    pendingAutonomousAction = null
-                    AlertDialog.Builder(this)
-                        .setTitle("AUTONOMOUS started")
-                        .setMessage(
-                            "Nav2 and Collision Monitor are READY. Motion remains disabled until " +
-                                "CH05 is down and AUTONOMOUS is explicitly armed."
-                        )
-                        .setPositiveButton("OK", null)
-                        .show()
+    private fun requestSidexDemo(action: PendingSidexAction) {
+        pendingSidexAction = action
+        val wireAction = if (action == PendingSidexAction.START) "start" else "stop"
+        if (!BuildConfig.CONTROL_SIMULATOR) {
+            udpSender.send(
+                ControlProtocol.sidex(
+                    ++commandSequence,
+                    wireAction,
+                    operatorConfirmed = action == PendingSidexAction.STOP
+                )
+            )
+        }
+        setStatus(if (action == PendingSidexAction.START) "Starting SIDEX DEMO; waiting for Jetson"
+            else "Stopping SIDEX DEMO")
+    }
+
+    private fun handleSidexCompletion(snapshot: OperatorSnapshot) {
+        if (snapshot.sidexState == SidexState.FAULT) {
+            val signature = "${snapshot.sidexFaultCode}:${snapshot.sidexStage}:${snapshot.message}"
+            if (lastSidexFaultSignature != signature) {
+                lastSidexFaultSignature = signature
+                pendingSidexAction = null
+                AlertDialog.Builder(this)
+                    .setTitle("SiDex Demo Stopped")
+                    .setMessage(sidexFaultMessage(snapshot))
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+            return
+        }
+        if (snapshot.sidexState == SidexState.STARTING || snapshot.sidexState == SidexState.RUNNING) {
+            lastSidexFaultSignature = null
+        }
+        if (snapshot.sidexState == SidexState.COMPLETE) {
+            val signature = "${snapshot.sidexStage}:${snapshot.sidexLap}"
+            if (lastSidexCompletionSignature != signature) {
+                lastSidexCompletionSignature = signature
+                pendingSidexAction = null
+                val distance = snapshot.sidexStageDistanceMetres
+                    ?.let { "\nMeasured stage distance: %.3f m".format(it) }
+                    .orEmpty()
+                val closure = snapshot.alignmentErrorMetres
+                    ?.let { "\nReturn-to-start error: %.3f m".format(it) }
+                    .orEmpty()
+                AlertDialog.Builder(this)
+                    .setTitle("SiDex Stage Completed")
+                    .setMessage("${snapshot.sidexStage.replace('_', ' ')} completed.$distance$closure")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+            return
+        }
+        if (snapshot.sidexState == SidexState.STARTING || snapshot.sidexState == SidexState.RUNNING) {
+            lastSidexCompletionSignature = null
+        }
+        when (pendingSidexAction) {
+            PendingSidexAction.START -> when (snapshot.sidexState) {
+                SidexState.RUNNING, SidexState.PAUSED -> {
+                    pendingSidexAction = null
+                    setStatus("SIDEX DEMO running: ${snapshot.sidexStage}")
                 }
-                AutonomousState.FAULT -> {
-                    pendingAutonomousAction = null
-                    AlertDialog.Builder(this).setTitle("AUTONOMOUS start failed")
+                SidexState.FAULT -> {
+                    pendingSidexAction = null
+                    AlertDialog.Builder(this).setTitle("SIDEX DEMO start failed")
                         .setMessage(snapshot.message).setPositiveButton("OK", null).show()
                 }
                 else -> Unit
             }
-            PendingAutonomousAction.STOP -> if (snapshot.autonomousState == AutonomousState.STOPPED) {
-                pendingAutonomousAction = null
-                AlertDialog.Builder(this)
-                    .setTitle("AUTONOMOUS stopped")
-                    .setMessage(
-                        "Nav2 and Collision Monitor have stopped fully. Livox, FAST-LIO, speed, " +
-                            "roll and pitch telemetry remain active."
-                    )
-                    .setPositiveButton("OK", null)
-                    .show()
+            PendingSidexAction.STOP -> if (
+                snapshot.sidexState == SidexState.STOPPED || snapshot.sidexState == SidexState.COMPLETE
+            ) {
+                pendingSidexAction = null
+                setStatus("SIDEX DEMO stopped; LiDAR telemetry remains active")
             }
             null -> Unit
         }
     }
 
+    private fun sidexFaultMessage(snapshot: OperatorSnapshot): String {
+        return when (snapshot.sidexFaultCode) {
+            "OBSTACLE_TIMEOUT" ->
+                "An obstacle stayed in the route for 30 seconds. The demo stopped. " +
+                    "Remove the obstacle, check the route, then start the demo again."
+            "STAIR_CONTACT_MISSING" ->
+                "The Tanker did not detect the stair climb. Check that it is centred and facing the stair entrance."
+            "TOP_STOP_OVERSHOOT" ->
+                "The Tanker passed the expected top-platform stopping position. Return it to the marked start before retrying."
+            "SAFETY_VIEW_LOST" ->
+                "The LiDAR collision view was unavailable. Check the LiDAR status and route, then retry."
+            "LOCALIZATION_LOST", "START_NOT_LOCALIZED", "LAP_RELOCALIZATION_TIMEOUT" ->
+                "The Tanker could not confirm its course position. Put it at the marked start and wait for MAP LOCALIZED."
+            "TELEMETRY_LOST" ->
+                "Telemetry from the Jetson was lost. Check the Jetson and LiDAR connection before retrying."
+            else -> snapshot.message.ifBlank {
+                "The demo stopped at ${snapshot.sidexStage.replace('_', ' ')}. Check the displayed fault and route before retrying."
+            }
+        }
+    }
+
     private fun sendProductionCommand(type: String, payload: JSONObject = JSONObject()) {
         if (!BuildConfig.CONTROL_SIMULATOR) udpSender.send(ControlProtocol.command(++commandSequence, type, payload))
+    }
+
+    private fun sendProductionCommandReliable(type: String, payload: JSONObject = JSONObject()) {
+        if (BuildConfig.CONTROL_SIMULATOR) return
+        val packets = List(3) {
+            ControlProtocol.command(++commandSequence, type, payload)
+        }
+        udpSender.sendBurst(packets, intervalMs = 120L)
     }
 
     private fun scanAndChooseCamera(onCameraChosen: (CameraScanner.HostCandidate) -> Unit) {
@@ -981,11 +1114,15 @@ class MainActivity : AppCompatActivity() {
         val level = speedLevelFromCh12(channels[11])
         runOnUiThread {
             updateSpeedBubbleUi(level)
+            // In production, Jetson SBUS telemetry is the authoritative CH05
+            // source. The G30 RC SDK uses a different raw scale (for example
+            // 1950 instead of 1722 for UP); mixing both sources made the raw
+            // diagnostic flicker even though the physical mode was stable.
             if (BuildConfig.CONTROL_SIMULATOR) {
                 renderOperatorState(operatorControl.updateChannels(effectiveChannels))
             }
-            if (!BuildConfig.CONTROL_SIMULATOR && operatorSnapshot.ch05 == Ch05Position.UP_MANUAL &&
-                operatorSnapshot.route == ConnectionRoute.INTERNET && operatorSnapshot.internetArmed) {
+            if (!BuildConfig.CONTROL_SIMULATOR && operatorSnapshot.ch05 == Ch05Position.DOWN_INTERNET &&
+                operatorSnapshot.internetArmed) {
                 udpSender.send(ControlProtocol.rcChannels(++commandSequence, effectiveChannels))
             }
         }
@@ -994,60 +1131,163 @@ class MainActivity : AppCompatActivity() {
     private fun renderOperatorState(snapshot: OperatorSnapshot) {
         operatorSnapshot = snapshot
         val host = if (snapshot.route == ConnectionRoute.LOCAL) localJetsonHost()
-        else preferences.getString(PREF_INTERNET_HOST, "").orEmpty()
+        else internetJetsonHost()
         if (host.isNotBlank()) udpSender.setTarget(host, DEFAULT_UDP_PORT)
 
         val source = when (snapshot.ch05) {
-            Ch05Position.UP_MANUAL -> "MANUAL ${snapshot.route.name}"
+            Ch05Position.UP_RF_SIDEX -> if (OperatorControl.isSidexActive(snapshot.sidexState)) {
+                "SIDEX DEMO"
+            } else "RF MANUAL"
             Ch05Position.MIDDLE_SAFE -> "SAFE / DISABLED"
-            Ch05Position.DOWN_AUTONOMOUS -> "AUTONOMOUS LOCAL"
+            Ch05Position.DOWN_INTERNET -> "INTERNET CONTROL"
             Ch05Position.UNKNOWN -> "RC CHANNELS UNKNOWN"
         }
-        val ch05Diagnostic = snapshot.ch05Raw?.let { " · CH05 $it" }.orEmpty()
+        // Present the operator-facing G30 channel convention while retaining
+        // the authoritative 11-bit SBUS value internally for mode decisions.
+        val ch05Diagnostic = OperatorControl.ch05DisplayValue(snapshot.ch05)
+            ?.let { " · CH05 $it" }
+            .orEmpty()
         val simulationLabel = if (BuildConfig.CONTROL_SIMULATOR) {
             if (debugCh05Override == null) "SIMULATOR · TAP FOR SIM CH05" else "SIM CH05 OVERRIDE · TAP TO CHANGE"
         } else "LIVE · ${snapshot.telemetrySource}"
         val runtimeDiagnostic = if (BuildConfig.CONTROL_SIMULATOR) "SIMULATED RUNTIME" else buildString {
-            append("SENSORS ${snapshot.sensorState} - AUTO ${snapshot.autonomousState.name}")
-            append(" - ${snapshot.autonomousStage}")
-            if (snapshot.autonomousFaultCode.isNotBlank()) append(" - FAULT ${snapshot.autonomousFaultCode}")
+            append("SENSORS ${snapshot.sensorState} - SIDEX ${snapshot.sidexState.name}")
+            append(" - ${snapshot.sidexStage}")
+            append(" - ${snapshot.sidexCourseProfile.replace('_', ' ')}")
+            if (snapshot.sidexFaultCode.isNotBlank()) append(" - FAULT ${snapshot.sidexFaultCode}")
         }
         controlState.text = "$source$ch05Diagnostic\n$simulationLabel\n$runtimeDiagnostic"
+        val runtimeHealthy = snapshot.sensorState == "READY" &&
+            snapshot.telemetrySource != "STALE" && snapshot.telemetrySource != "ODOMETRY_FAULT"
         controlState.setTextColor(ContextCompat.getColor(this,
-            if (BuildConfig.CONTROL_SIMULATOR) R.color.industrial_warning else R.color.industrial_success))
+            if (BuildConfig.CONTROL_SIMULATOR || !runtimeHealthy) R.color.industrial_warning
+            else R.color.industrial_success))
 
         val displaySpeed = snapshot.speedMetresPerSecond ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
         val displayRoll = snapshot.rollDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
         val displayPitch = snapshot.pitchDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
         val speed = displaySpeed?.let { "%.2f m/s".format(it) } ?: "—"
+        val displayYaw = snapshot.yawDegrees ?: if (BuildConfig.CONTROL_SIMULATOR) 0.0 else null
         telemetry.text = "SPEED $speed   ROLL ${ControlProtocol.direction(displayRoll, "LEFT", "RIGHT")}   " +
-            "PITCH ${ControlProtocol.direction(displayPitch, "BACKWARD", "FORWARD")}"
-        turnQueue.text = "TURN PENDING ${snapshot.totalTurns} / 6"
+            "PITCH ${ControlProtocol.direction(displayPitch, "BACKWARD", "FORWARD")}   " +
+            "YAW ${ControlProtocol.direction(displayYaw, "RIGHT", "LEFT")}"
+        turnQueue.text = if (snapshot.mapRecording) {
+            "MAPPING COURSE · %.0f s\nDRIVE ONE LAP, RETURN TO MARK".format(snapshot.mapDurationSeconds)
+        } else if (snapshot.mapState == "SAVING") {
+            "BUILDING 3D MAP\nDO NOT POWER OFF"
+        } else if (snapshot.sidexAvailable || snapshot.sidexState != SidexState.STOPPED) {
+            buildString {
+                append(if (snapshot.sidexSimulatedGeometry) "SIDEX FLAT DRAFT" else "SIDEX RAMP LIVE")
+                when (snapshot.sidexState) {
+                    SidexState.STOPPED -> {
+                        append(" · READY")
+                        if (snapshot.sidexSimulatedGeometry) {
+                            val sideA = snapshot.sidexRectangleSideAMetres
+                            val sideB = snapshot.sidexRectangleSideBMetres
+                            if (sideA != null && sideB != null) append(" · RECT %.2f × %.2f m".format(sideA, sideB))
+                        }
+                    }
+                    SidexState.FAULT -> {
+                        append(" · FAULT")
+                        if (snapshot.sidexFaultCode.isNotBlank()) append(" · ${snapshot.sidexFaultCode}")
+                    }
+                    SidexState.COMPLETE -> append(" · ${snapshot.sidexStage.replace('_', ' ')}")
+                    else -> {
+                        append(" · LAP ${snapshot.sidexLap} · ${snapshot.sidexStage.replace('_', ' ')}")
+                        snapshot.sidexStageDistanceMetres?.let { append(" · %.2f m".format(it)) }
+                    }
+                }
+            }
+        } else ""
 
-        udpTargetButton.text = snapshot.route.name
-        udpTargetButton.isEnabled = snapshot.ch05 == Ch05Position.UP_MANUAL
-        internetArmButton.visibility = if (snapshot.ch05 == Ch05Position.UP_MANUAL && snapshot.route == ConnectionRoute.INTERNET) View.VISIBLE else View.GONE
-        internetArmButton.text = if (snapshot.internetArmed) "INTERNET ARMED" else "INTERNET SAFE"
-        autonomousProcessButton.visibility = if (
-            snapshot.ch05 == Ch05Position.MIDDLE_SAFE || snapshot.ch05 == Ch05Position.DOWN_AUTONOMOUS
-        ) View.VISIBLE else View.GONE
-        autonomousProcessButton.isEnabled = snapshot.autonomousState != AutonomousState.STARTING
-        autonomousProcessButton.text = when (snapshot.autonomousState) {
-            AutonomousState.STOPPED, AutonomousState.FAULT -> "START AUTONOMOUS"
-            AutonomousState.STARTING -> "STARTING…"
-            AutonomousState.READY -> "STOP AUTONOMOUS"
+        udpTargetButton.text = when (snapshot.ch05) {
+            Ch05Position.UP_RF_SIDEX -> "LOCAL IP"
+            Ch05Position.DOWN_INTERNET -> "TAILSCALE IP"
+            Ch05Position.MIDDLE_SAFE, Ch05Position.UNKNOWN -> "DESTINATION IP"
         }
-        autonomousArmButton.visibility = if (snapshot.ch05 == Ch05Position.DOWN_AUTONOMOUS) View.VISIBLE else View.GONE
-        autonomousArmButton.isEnabled = snapshot.autonomousState == AutonomousState.READY
-        autonomousArmButton.text = if (snapshot.autonomousArmed) "AUTONOMOUS ARMED" else "AUTONOMOUS SAFE"
+        udpTargetButton.visibility = if (
+            snapshot.ch05 == Ch05Position.UP_RF_SIDEX || snapshot.ch05 == Ch05Position.DOWN_INTERNET
+        ) View.VISIBLE else View.GONE
+        udpTargetButton.isEnabled = udpTargetButton.visibility == View.VISIBLE
+        internetArmButton.visibility = if (
+            snapshot.ch05 == Ch05Position.DOWN_INTERNET
+        ) View.VISIBLE else View.GONE
+        internetArmButton.text = if (snapshot.internetArmed) "INTERNET ARMED" else "INTERNET SAFE"
+        zeroTelemetryButton.isEnabled = snapshot.ch05 != Ch05Position.UNKNOWN &&
+            runtimeHealthy &&
+            kotlin.math.abs(snapshot.speedMetresPerSecond ?: Double.POSITIVE_INFINITY) <= 0.03 &&
+            !OperatorControl.isSidexActive(snapshot.sidexState) &&
+            !snapshot.teachRecording && !snapshot.mapRecording && snapshot.mapState != "SAVING" &&
+            !snapshot.sidexArmed &&
+            !(snapshot.ch05 == Ch05Position.DOWN_INTERNET && snapshot.internetArmed)
+        sidexDemoButton.visibility = if (snapshot.ch05 == Ch05Position.UP_RF_SIDEX) View.VISIBLE else View.GONE
+        sidexDemoButton.isEnabled = when (snapshot.sidexState) {
+            SidexState.STARTING -> false
+            SidexState.RUNNING, SidexState.PAUSED -> true
+            SidexState.STOPPED, SidexState.COMPLETE, SidexState.FAULT ->
+                snapshot.sidexAvailable && runtimeHealthy && !snapshot.teachRecording && !snapshot.mapRecording
+        }
+        sidexDemoButton.text = when (snapshot.sidexState) {
+            SidexState.STARTING -> "STARTING SIDEX…"
+            SidexState.RUNNING, SidexState.PAUSED -> "STOP SIDEX DEMO"
+            SidexState.STOPPED, SidexState.COMPLETE, SidexState.FAULT ->
+                if (snapshot.sidexAvailable) "START SIDEX DEMO" else "WAIT: ${snapshot.sidexWaitReason.ifBlank { "BACKEND" }}"
+        }
+        pendingCollisionMonitorState?.let { requested ->
+            if (snapshot.collisionMonitorActive == requested) {
+                pendingCollisionMonitorState = null
+            } else if (System.currentTimeMillis() >= collisionCommandDeadlineMs) {
+                pendingCollisionMonitorState = null
+                setStatus("Collision monitor command was not confirmed by Jetson")
+            }
+        }
+        collisionMonitorButton.visibility = if (
+            snapshot.ch05 == Ch05Position.UP_RF_SIDEX && OperatorControl.isSidexActive(snapshot.sidexState)
+        ) View.VISIBLE else View.GONE
+        collisionMonitorButton.isEnabled = pendingCollisionMonitorState == null &&
+            snapshot.telemetrySource != "STALE"
+        collisionMonitorButton.text = when {
+            pendingCollisionMonitorState != null -> "COLLISION…"
+            snapshot.collisionMonitorActive -> "COLLISION ON"
+            else -> "COLLISION OFF"
+        }
+        collisionMonitorButton.backgroundTintList = ContextCompat.getColorStateList(
+            this,
+            if (snapshot.collisionMonitorActive) R.color.industrial_success else R.color.industrial_danger
+        )
+        sidexMapButton.visibility = if (
+            snapshot.ch05 == Ch05Position.UP_RF_SIDEX || snapshot.mapRecording || snapshot.mapState == "SAVING"
+        ) View.VISIBLE else View.GONE
+        sidexMapButton.isEnabled = snapshot.mapState != "SAVING" && (snapshot.mapRecording || (
+            snapshot.mapAvailable && runtimeHealthy &&
+                !OperatorControl.isSidexActive(snapshot.sidexState) && !snapshot.sidexArmed
+        ))
+        sidexMapButton.text = if (snapshot.mapRecording) {
+            "SAVE MAP"
+        } else if (snapshot.mapState == "SAVING") {
+            "SAVING MAP…"
+        } else if (snapshot.mapAvailable) {
+            "MAP COURSE"
+        } else {
+            "MAP BACKEND WAIT"
+        }
 
-        val manualTurnsEnabled = snapshot.ch05 == Ch05Position.UP_MANUAL && !snapshot.neutralInterlock &&
-            (snapshot.route == ConnectionRoute.LOCAL || snapshot.internetArmed)
+        val manualTurnsEnabled = (
+            snapshot.ch05 == Ch05Position.UP_RF_SIDEX ||
+                (snapshot.ch05 == Ch05Position.DOWN_INTERNET && snapshot.internetArmed)
+            ) && !snapshot.neutralInterlock && !OperatorControl.isSidexActive(snapshot.sidexState)
         listOf<Button>(findViewById(R.id.btnL2), findViewById(R.id.btnL1), findViewById(R.id.btnR1), findViewById(R.id.btnR2))
             .forEach { it.isEnabled = manualTurnsEnabled }
 
         lastActiveTurn = snapshot.activeTurn
-        setStatus(snapshot.message)
+        setStatus(
+            when {
+                snapshot.obstaclePaused ->
+                    "OBSTACLE DETECTED · TANKER STOPPED · REMOVE IT TO AUTO-RESUME (30 s limit)"
+                snapshot.sidexState == SidexState.FAULT -> sidexFaultMessage(snapshot)
+                else -> snapshot.message
+            }
+        )
     }
 
     private fun speedLevelFromCh12(ch12: Int): Int {
@@ -1074,7 +1314,7 @@ class MainActivity : AppCompatActivity() {
             val view = when (currentViewMode) {
                 ViewMode.FOCUS -> "FOCUS"
                 ViewMode.FOUR -> "4 CAM"
-                ViewMode.SIX -> "6 CAM"
+                ViewMode.SIX -> "4 CAM"
                 ViewMode.FULLSCREEN -> "FULL"
             }
             status.text = "$rc   |   CAMERAS ${videoGrid.liveCount()}/$CAMERA_COUNT LIVE   |   $view   |   ${udpSender.targetText()}"
@@ -1111,10 +1351,11 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "TankerMainActivity"
         private const val DEFAULT_JETSON_IP = "192.168.144.20"
+        private const val DEFAULT_TAILSCALE_IP = "100.110.108.96"
         private const val DEFAULT_UDP_PORT = 5005
         private const val TELEMETRY_UDP_PORT = 5006
-        private const val CAMERA_COUNT = 6
-        private val CAMERA_NAMES = listOf("FRONT C12", "CAMERA 2", "CAMERA 3", "CAMERA 4", "CAMERA 5", "CAMERA 6")
+        private const val CAMERA_COUNT = 4
+        private val CAMERA_NAMES = listOf("FRONT C12", "FRONT MIDDLE", "BACK LEFT", "BACK RIGHT")
 
         private const val PREFERENCES_NAME = "tanker_operator_settings"
         private const val PREF_VIEW_MODE = "camera_view_mode"
@@ -1122,7 +1363,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LOCAL_HOST = "local_jetson_host"
         private const val PREF_INTERNET_HOST = "internet_jetson_host"
         private const val PREF_CAMERA_SCHEMA = "camera_config_schema"
-        private const val CAMERA_SCHEMA_VERSION = 2
+        private const val CAMERA_SCHEMA_VERSION = 3
         private fun cameraUrlKey(slot: Int) = "camera_url_$slot"
 
         private const val CH_MIN = 1050

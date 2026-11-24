@@ -1,85 +1,56 @@
 # TankerAMR G30 Operator App
 
-Android operator app for Skydroid G30:
+Android operator app for the Skydroid G30 controller. This source is version **2.5.1**, version code **27**, with application ID `sg.hexcel.tankeramr`.
 
-- Scans the 192.168.144.x camera subnet.
-- Displays up to six RTSP cameras with focus, 2×2 and 3×2 views.
-- Uses the C12 visible stream on port 554 and thermal stream on port 555.
-- Shows speed, roll and pitch telemetry received from Jetson.
-- Provides CH05-gated LOCAL/INTERNET manual routing and LOCAL-only AUTONOMOUS controls.
-- Shows the authoritative number of pending 90-degree turns and queues at most six, including the active turn.
+## Main functions
 
-## Safety and control model
+- C12 visible and thermal video, plus the front-middle, back-left and back-right IP cameras.
+- Four-camera and focused viewing, camera address editing and camera discovery.
+- Jetson telemetry including speed, roll, pitch, yaw and sensor/SiDex status.
+- Local RF and Internet control status, fixed-angle turn requests and C12 gimbal controls.
+- SiDex start/stop confirmation, course mapping and a collision-monitor toggle with Jetson acknowledgement.
 
-- CH05 up: manual control. LOCAL is the default; INTERNET requires arming.
-- CH05 middle: hard-safe state. Arms and queued turns are cleared; LOCAL is restored after 0.5 seconds.
-- CH05 down: AUTONOMOUS only. Leaving down always disarms it, but a READY process remains running.
-- `START AUTONOMOUS` is hidden while CH05 is up, requires confirmation, and changes to `STOP AUTONOMOUS` only after Jetson reports READY.
-- Start/stop completion dialogs use authoritative Jetson state. Stopping Nav2 and Collision Monitor leaves Livox, FAST-LIO, speed and tilt telemetry active.
-- LOCAL/INTERNET route changes are sent through the currently reachable route; returning to LOCAL also sends a recovery copy to the configured LAN address.
-- LOCAL Jetson command endpoint: `192.168.144.20:5005`.
-- Jetson telemetry listener: UDP port `5006`.
-- INTERNET address is explicitly configured by the operator; the app never guesses a Tailscale IP.
+## Control modes
 
-Commands and telemetry use versioned JSON (`v: 1`). Telemetry includes speed, roll, pitch,
-sensor readiness, Autonomous startup stage and a specific fault code. This lets the operator
-distinguish LiDAR, IMU, FAST-LIO, scan, TF, localization, Nav2 and Collision Monitor failures.
-Telemetry becomes stale after 1.5 seconds and the UI displays `—`.
+The Jetson's SBUS telemetry is the authority for CH05:
 
-## Debug simulator
+- **Up:** local RF control and SiDex controls. Starting SiDex requires operator confirmation and Jetson readiness.
+- **Middle:** drive disabled; use this position to stop the robot immediately.
+- **Down:** Internet manual control, which must be armed before driving.
 
-Debug APKs never send Tanker movement commands. Tap the amber control-state label and select simulated
-CH05 up, middle, or down to test the complete G30 workflow without a powered TankerAMR. The screen is
-clearly marked `SIMULATOR` / `SIM CH05 OVERRIDE`. Commissioning and release builds trust authoritative
-Jetson SBUS telemetry for CH05; RCSDK channels are sent only for armed INTERNET manual control.
+The app sends commands to the editable Jetson destination on UDP 5005 and receives telemetry on UDP 5006. Robot services, route configuration and collision processing run on Jetson and are maintained separately.
 
-The connected G30 reports CH05 unreliably through RCSDK. Jetson SBUS is the safety authority:
-282=AUTONOMOUS/down, 1002=disabled/middle, and 1722=manual/up.
+## Open in Android Studio
 
-## Required AAR files
+1. Download or clone this repository to the development laptop.
+2. In Android Studio, select **Open** and choose the folder containing `settings.gradle` and `gradlew.bat`.
+3. Set the Android SDK location for this computer. Android Studio creates `local.properties`; this file is intentionally excluded from Git.
+4. Use **Java 21**, Android SDK **35**, and Build Tools **34.0.0**. Keep the supplied Gradle wrapper **9.3.0**, Android Gradle Plugin **8.5.2** and Kotlin **1.9.24** when reproducing this version.
+5. Select the **commissioning** build variant for a real G30. The **debug** variant enables the simulator and is not the real-controller build.
 
-Copy these proprietary Skydroid AAR files into `app/libs/` before building:
+## Test and build on Windows
+
+Open PowerShell in the project folder after configuring Java 21 and the Android SDK:
+
+```powershell
+.\gradlew.bat testCommissioningUnitTest assembleCommissioning
+```
+
+The installer is generated at `app/build/outputs/apk/commissioning/app-commissioning.apk`. Building does not install the app or move the robot.
+
+Commissioning uses the developer debug-signing configuration. Obtain the matching company signing key through the approved handover process when an in-place update of the installed G30 app is required. Signing keys are not stored in this repository.
+
+## Required Skydroid libraries
+
+The existing project includes these dependencies in `app/libs/`:
 
 - `fpvplayer-v3.3.9.aar`
 - `sky-ijkplayer-v1.1.aar`
 - `rcsdk-v1.9.2.aar`
 - `h16_airlink.aar`
 
-## Default camera URLs
+These are vendor libraries, not project-owned source. Use them under the applicable vendor terms.
 
-The four installed IP cameras use their verified HEVC 1920x1080 @ 25 fps main stream:
+## Files kept out of Git
 
-`rtsp://admin:@<IP>:554/user=admin&password=&channel=1&stream=0.sdp`
-
-Default camera order:
-
-1. FRONT C12 (`192.168.144.108`)
-2. CAMERA 2 (`192.168.144.100`)
-3. CAMERA 3 (`192.168.144.110`)
-4. CAMERA 4 (`192.168.144.130`)
-5. CAMERA 5 (`192.168.144.120`)
-6. CAMERA 6 (reserved)
-
-C12 starts on visible video after every fresh app launch. The CAMERAS editor provides
-`RESTORE VERIFIED` to recover the unique 1080p camera mapping.
-
-## Camera resilience
-
-- RTSP uses TCP to keep HEVC video stable across the receiver and Ethernet switch.
-- A stream that cannot connect within 10 seconds is stopped so it cannot consume resources needed by the other cameras or UDP controls.
-- If the C12 visible stream is unavailable, the app attempts the thermal stream once and informs the operator. Thermal uses software decoding for compatibility with the G30.
-- Stream replacement ignores delayed disconnect callbacks from the previous player, preventing a successful visible/thermal switch from being marked offline.
-
-## Jetson network and runtime
-
-Expected Ethernet addresses:
-
-- `192.168.1.50/24` for LiDAR
-- `192.168.144.20/24` for cameras and G30 UDP control
-
-No gateway is added for 192.168.144.20.
-
-The deployed runtime is organized under `/home/jetson/KinSen`, with settings in
-`config/settings.json`, runtime state in `run/`, logs in `logs/`, and timestamped rollback copies in
-`backups/`. Livox, FAST-LIO and scan conversion are always-on telemetry services. Nav2 and Collision
-Monitor are separately managed by START/STOP AUTONOMOUS.
+`.gitignore` excludes Android Studio settings, local SDK paths, generated builds, APKs, Gradle caches and signing-key files. The repository keeps source code, resources, unit tests, build configuration, Gradle wrapper and required libraries. It does not contain the Jetson installation or the separate company recovery backup.

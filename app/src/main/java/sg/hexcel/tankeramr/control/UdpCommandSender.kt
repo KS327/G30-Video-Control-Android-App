@@ -45,6 +45,25 @@ class UdpCommandSender(
         }
     }
 
+    fun sendBurst(texts: List<String>, intervalMs: Long = 120L) {
+        val targetHost = host
+        val targetPort = port
+        thread(name = "udp-command-burst", isDaemon = true) {
+            try {
+                val address = InetAddress.getByName(targetHost)
+                DatagramSocket().use { socket ->
+                    texts.forEachIndexed { index, text ->
+                        val data = text.toByteArray(Charsets.UTF_8)
+                        socket.send(DatagramPacket(data, data.size, address, targetPort))
+                        if (index < texts.lastIndex) Thread.sleep(intervalMs)
+                    }
+                }
+            } catch (e: Exception) {
+                onStatusCallback?.invoke("UDP send failed to $targetHost:$targetPort - ${e.message}")
+            }
+        }
+    }
+
     override fun close() {
         onStatusCallback = null
     }

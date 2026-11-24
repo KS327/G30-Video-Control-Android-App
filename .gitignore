@@ -1,4 +1,24 @@
-# Project exclude paths
-/.gradle/
-/app/build/
-/build/
+# Android Studio and per-computer settings
+.idea/
+*.iml
+local.properties
+.DS_Store
+
+# Generated build files and caches
+.gradle/
+**/build/
+.cxx/
+.externalNativeBuild/
+captures/
+
+# App installers are built from source
+*.apk
+*.aab
+
+# Signing keys and private configuration
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*
